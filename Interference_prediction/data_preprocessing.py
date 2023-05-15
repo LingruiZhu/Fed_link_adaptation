@@ -62,6 +62,20 @@ def preprocess_test(original_data:np.array, num_inputs:int, num_outputs:int, shu
         data_sample = data_sample[random_indices]
     return data_sample
     
+    
+def prepare_data(num_inputs, num_outputs):
+    data_file_path = "Interference_generation/interference_data/single_UE_data.h5"
+    sinr_sequence, sinr_dB_sequence, interference_sequence = read_file(data_file_path)
+    
+    # Use sinr sequence to train model
+    train_sinr_sequence, test_sinr_sequence = sinr_dB_sequence[:8000], sinr_dB_sequence[8000:]
+    train_samples = preprocess_train(train_sinr_sequence, num_inputs=num_inputs, num_outputs=num_outputs, shuffle_samples=True)
+    x_train, y_train = train_samples[:, :num_inputs], train_samples[:, num_inputs:]
+    x_train = np.expand_dims(x_train, axis=-1)
+    test_samples = preprocess_test(test_sinr_sequence, num_inputs=num_inputs, num_outputs=num_outputs, shuffle_samples=False)
+    x_test, y_test = test_samples[:, :num_inputs], test_samples[:, num_inputs:]
+    x_test = np.expand_dims(x_test, axis=-1)
+    return x_train, y_train, x_test, y_test, test_sinr_sequence
 
 if __name__ == "__main__":
     file_path = "Interference_generation/interference_data/single_UE_data.h5"

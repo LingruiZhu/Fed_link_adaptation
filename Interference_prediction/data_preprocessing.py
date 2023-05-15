@@ -20,7 +20,8 @@ def read_file(file_path:str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return sinr_data, sinr_dB_data, interference_data
 
 
-def preprocess(original_data:np.array, num_inputs:int, num_outputs:int, shuffle_samples:bool=False) -> np.ndarray:
+# TODO: here need to distinguish the preprocessing for train and test
+def preprocess_train(original_data:np.array, num_inputs:int, num_outputs:int, shuffle_samples:bool=False) -> np.ndarray:
     """this function help us convert 1-D sequense to 2-D data_samples
 
     Args:
@@ -34,6 +35,27 @@ def preprocess(original_data:np.array, num_inputs:int, num_outputs:int, shuffle_
     data_sample_list = list()
     for i in range(num_samples):
         data_sample_list.append(original_data[i:i+sliding_window_length])
+    data_sample = np.array(data_sample_list)
+    if shuffle_samples:
+        random_indices = np.random.permutation(data_sample.shape[0])
+        data_sample = data_sample[random_indices]
+    return data_sample
+
+
+def preprocess_test(original_data:np.array, num_inputs:int, num_outputs:int, shuffle_samples:bool=False) -> np.ndarray:
+    """this function help us convert 1-D sequense to 2-D data_samples
+
+    Args:
+        original_data (np.array): _description_
+    """
+    
+    # start of the code
+    sliding_window_length = num_inputs + num_outputs
+    data_length = np.shape(original_data)[0]
+    num_samples = int(data_length/sliding_window_length)
+    data_sample_list = list()
+    for i in range(num_samples):
+        data_sample_list.append(original_data[i*sliding_window_length:(i+1) * sliding_window_length])
     data_sample = np.array(data_sample_list)
     if shuffle_samples:
         random_indices = np.random.permutation(data_sample.shape[0])

@@ -62,6 +62,19 @@ def preprocess_test(original_data:np.array, num_inputs:int, num_outputs:int, shu
         data_sample = data_sample[random_indices]
     return data_sample
     
+
+def preprocess_encoder_decoder_test(data_sample:np.array, starting_buffer:np.array, num_input:int, num_output:int):
+    num_samples = np.shape(data_sample)[0]
+    new_samples = list()
+    for i in range(num_samples):
+        if i == 0:
+            extend_part = starting_buffer
+        else:
+            extend_part = data_sample[i-1,-(num_input-1):]
+        extended_sample = np.concatenate((extend_part, data_sample[i:,]), axis=0)
+        new_samples.append(extended_sample)
+    return np.array(new_samples)
+
     
 def prepare_data(num_inputs, num_outputs):
     data_file_path = "Interference_generation/interference_data/single_UE_data.h5"
@@ -76,6 +89,14 @@ def prepare_data(num_inputs, num_outputs):
     x_test, y_test = test_samples[:, :num_inputs], test_samples[:, num_inputs:]
     x_test = np.expand_dims(x_test, axis=-1)
     return x_train, y_train, x_test, y_test, test_sinr_sequence
+
+
+def prepare_data_for_encoder_decoder_test(num_inputs, num_outputs):
+    data_file_path = "Interference_generation/interference_data/single_UE_data.h5"
+    sinr_sequence, sinr_dB_sequence, interference_sequence = read_file(data_file_path)
+    normal_data_samples = preprocess_test()
+    
+    
 
 if __name__ == "__main__":
     file_path = "Interference_generation/interference_data/single_UE_data.h5"

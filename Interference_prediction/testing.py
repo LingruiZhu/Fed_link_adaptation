@@ -25,6 +25,11 @@ def test_model(model_path:str):
     plt.legend()
     plt.show()
     
+
+def test_encoder_decoder_model():
+    model = load_model("Interference_prediction/models/encoder_decoder.h5")
+    
+    
     
 if __name__ == "__main__":
     test_model("Interference_prediction/models/lstm.h5")

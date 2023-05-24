@@ -1,8 +1,8 @@
 import numpy as np
 import h5py
-from typing import Tuple
 
-def read_file(file_path:str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+def read_file(file_path:str):
     
     """read interference and SINR sequence from file
 
@@ -20,15 +20,9 @@ def read_file(file_path:str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return sinr_data, sinr_dB_data, interference_data
 
 
-# TODO: here need to distinguish the preprocessing for train and test
 def preprocess_train(original_data:np.array, num_inputs:int, num_outputs:int, shuffle_samples:bool=False) -> np.ndarray:
-    """this function help us convert 1-D sequense to 2-D data_samples
-
-    Args:
-        original_data (np.array): _description_
-    """
+    """ start of the code"""
     
-    # start of the code
     sliding_window_length = num_inputs + num_outputs
     data_length = np.shape(original_data)[0]
     num_samples = data_length - sliding_window_length + 1
@@ -52,10 +46,10 @@ def preprocess_test(original_data:np.array, num_inputs:int, num_outputs:int, shu
     # start of the code
     sliding_window_length = num_inputs + num_outputs
     data_length = np.shape(original_data)[0]
-    num_samples = int(data_length/sliding_window_length)
+    num_samples = int((data_length - num_inputs)/num_outputs)
     data_sample_list = list()
     for i in range(num_samples):
-        data_sample_list.append(original_data[i*sliding_window_length:(i+1) * sliding_window_length])
+        data_sample_list.append(original_data[i*num_outputs: i*num_outputs + sliding_window_length])
     data_sample = np.array(data_sample_list)
     if shuffle_samples:
         random_indices = np.random.permutation(data_sample.shape[0])
@@ -70,8 +64,8 @@ def preprocess_encoder_decoder_test(data_sample:np.array, starting_buffer:np.arr
         if i == 0:
             extend_part = starting_buffer
         else:
-            extend_part = data_sample[i-1,-(num_input-1):]
-        extended_sample = np.concatenate((extend_part, data_sample[i:,]), axis=0)
+            extend_part = data_sample[i-1,-(num_output-1):]
+        extended_sample = np.concatenate((extend_part, data_sample[i,:]), axis=0)
         new_samples.append(extended_sample)
     return np.array(new_samples)
 
@@ -93,9 +87,12 @@ def prepare_data(num_inputs, num_outputs):
 
 def prepare_data_for_encoder_decoder_test(num_inputs, num_outputs):
     data_file_path = "Interference_generation/interference_data/single_UE_data.h5"
-    sinr_sequence, sinr_dB_sequence, interference_sequence = read_file(data_file_path)
-    normal_data_samples = preprocess_test()
-    
+    _, sinr_dB_sequence, _ = read_file(data_file_path)
+    test_sinr_sequence = sinr_dB_sequence[8000:]
+    normal_data_samples = preprocess_test(test_sinr_sequence, num_inputs=num_inputs, num_outputs=num_outputs, shuffle_samples=False)
+    previous_cache = sinr_dB_sequence[8000 - (num_outputs - 1): 8000]
+    extended_data_samples = preprocess_encoder_decoder_test(normal_data_samples, previous_cache, num_inputs, num_outputs)
+    return extended_data_samples
     
 
 if __name__ == "__main__":

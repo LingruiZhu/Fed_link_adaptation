@@ -36,14 +36,7 @@ def preprocess_train(original_data:np.array, num_inputs:int, num_outputs:int, sh
     return data_sample
 
 
-def preprocess_test(original_data:np.array, num_inputs:int, num_outputs:int, shuffle_samples:bool=False) -> np.ndarray:
-    """this function help us convert 1-D sequense to 2-D data_samples
-
-    Args:
-        original_data (np.array): _description_
-    """
-    
-    # start of the code
+def preprocess_test(original_data:np.array, num_inputs:int, num_outputs:int, shuffle_samples:bool=False) -> np.ndarray:     
     sliding_window_length = num_inputs + num_outputs
     data_length = np.shape(original_data)[0]
     num_samples = int((data_length - num_inputs)/num_outputs)

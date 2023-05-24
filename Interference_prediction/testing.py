@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 from tensorflow.keras.models import load_model
 
-from data_preprocessing import prepare_data, prepare_data_for_encoder_decoder_test
+from Interference_prediction.data_preprocessing import prepare_data, prepare_data_for_encoder_decoder_test
 
 
 def test_model(model_path:str, plot_result:bool=False):

@@ -1,3 +1,6 @@
 {
-    "python.analysis.typeCheckingMode": "off"
+    "python.analysis.typeCheckingMode": "off",
+    "python.autoComplete.addBrackets": true,
+    "python.autoComplete.addCallParenthesis": true,
+    "python.pythonPath": "/home/zhu/anaconda3/envs/py_env3.8/bin/python"
 }

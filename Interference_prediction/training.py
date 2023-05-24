@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tensorflow.keras.models import Model
 
-from data_preprocessing import preprocess_train, preprocess_test, read_file, prepare_data
+from Interference_prediction.data_preprocessing import preprocess_train, preprocess_test, read_file, prepare_data
 from lstm_model import build_lstm_predict_model
 from encode_decoder_model import build_encoder_decoder_model
 

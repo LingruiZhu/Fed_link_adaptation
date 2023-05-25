@@ -1,7 +1,8 @@
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
 
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input
 
 from Interference_prediction.lstm_model import build_lstm_predict_model
@@ -24,16 +25,27 @@ def train_e2e_AE_LSTM_model():
     e2e_model = create_AE_LSTM_model(input_dim=40, output_dim=10, latent_dim=10)
     e2e_model.compile(optimizer="adam", loss="mean_squared_error")
     e2e_model.summary()
-    x_train, y_train, x_test, y_test, _ = prepare_data(num_inputs=40, num_outputs=10)
+    x_train, y_train, _, _, _ = prepare_data(num_inputs=40, num_outputs=10)
     x_train = np.squeeze(x_train)
     e2e_model.fit(x_train, y_train, batch_size=128, epochs=500)
     e2e_model.save("models/feedback_models/e2e_models/e2e_ae_lstm.h5")
 
 
 def test_e2e_AE_LSTM_model():
-    pass
+    e2e_model_path = "models/e2e_models/e2e_ae_lstm.h5"
+    e2e_model = load_model(e2e_model_path)
+    _, _, x_test, y_test, _ = prepare_data(num_inputs=40, num_outputs=10)
+    y_pred = e2e_model.predict(x_test)
+    y_pred_1d = y_pred.flatten()
+    y_test_1d = y_test.flatten()
+    
+    plt.figure()
+    plt.plot(y_pred_1d, "b-s", label="e2e prediction")
+    plt.plot(y_pred_1d, "r-s", label="real SINR")
+    plt.legend()
+    plt.grid()
+    plt.show()
 
 
 if __name__ == "__main__":
-    train_e2e_AE_LSTM_model()
-    
+    test_e2e_AE_LSTM_model()    

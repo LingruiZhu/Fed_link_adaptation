@@ -11,7 +11,6 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from Interference_prediction import data_preprocessing
 
 
-
 def create_autoencoder(inputs_dims:int, latent_dims:int):
     inputs = Input(shape=(inputs_dims,))
     hidden1 = Dense(units=int(inputs_dims/2), activation="relu")(inputs)

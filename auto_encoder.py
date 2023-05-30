@@ -27,7 +27,7 @@ def create_autoencoder(inputs_dims:int, latent_dims:int):
     return autoencoder
     
 
-def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int):
+def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int, plot_figure:bool=True):
     autoencoder = create_autoencoder(inputs_dims, latent_dims)
     x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     
@@ -35,29 +35,25 @@ def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int):
     x_test = np.squeeze(x_test)
     
     scaler = MinMaxScaler()
-    x_train_scaled = scaler.fit_transform(x_train)
-    x_test_scaled = scaler.fit_transform(x_test)
     
     autoencoder.fit(x_train, x_train, epochs=500, batch_size=64)
     recover_test = autoencoder.predict(x_test)
-    # recover_test_rescale = scaler.inverse_transform(recover_test)
-    # mse = mean_squared_error(x_test_scaled, recover_test)
     mse_rescale = mean_squared_error(recover_test, x_test)
-    autoencoder.save("feedback_models/autoencoder.h5")
-    # print(f"the MSE before rescale is {mse}")
+    autoencoder.save("models/ae_models/autoencoder.h5")
     print(f"the MSE after rescale is {mse_rescale}")
     
-    x_test_recover_1d = recover_test[:10,:].flatten()
-    x_test_true_1d = x_test[:10,:].flatten()
-    
-    plt.figure()
-    plt.plot(x_test_recover_1d, "r-x", label="recoverd_signal")
-    plt.plot(x_test_true_1d, "b-s", label="true signal")
-    plt.grid()
-    plt.legend()
-    plt.show()
-    plt.xlabel("time steps")
-    plt.ylabel("SINR")
+    if plot_figure:
+        x_test_recover_1d = recover_test[:10,:].flatten()
+        x_test_true_1d = x_test[:10,:].flatten()
+        
+        plt.figure()
+        plt.plot(x_test_recover_1d, "r-x", label="recoverd_signal")
+        plt.plot(x_test_true_1d, "b-s", label="true signal")
+        plt.grid()
+        plt.legend()
+        plt.show()
+        plt.xlabel("time steps")
+        plt.ylabel("SINR")
 
 
 if __name__ == "__main__":

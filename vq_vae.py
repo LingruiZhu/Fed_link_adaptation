@@ -9,6 +9,8 @@ from tensorflow.keras import losses
 from tensorflow.keras import backend as K
 from tensorflow.python.keras.utils import losses_utils
 
+from tensorflow.python.
+
 from sklearn.metrics import mean_squared_error
 
 from Interference_prediction import data_preprocessing
@@ -72,6 +74,15 @@ class VectorQuantizer(Layer):
         # Derive the indices for minimum distances.
         encoding_indices = tf.argmin(distances, axis=1)
         return encoding_indices
+    
+    
+    def get_config(self):
+        config = super(VectorQuantizer, self).get_config()
+        config.update({
+            'num_embeddings': self.num_embeddings,
+            'embedding_dim': self.embedding_dim
+        })
+        return config 
 
 
 # def calculate_vae_loss(encoder_output, quantized_latent_variable, variance, beta):
@@ -98,7 +109,7 @@ class VectorQuantizer(Layer):
 def create_encoder(input_dim, latent_dim):
     inputs = Input(shape=(input_dim,))
     hidden1 = Dense(units=int(input_dim/2), activation="relu")(inputs)
-    encoder_output = Dense(units=latent_dim, activation="relu")(inputs)
+    encoder_output = Dense(units=latent_dim, activation="relu")(hidden1)
     encoder = Model(inputs, encoder_output, name="encoder")
     return encoder
 
@@ -111,20 +122,21 @@ def create_decoder(latent_dim, output_dim):
     return decoder
     
     
-def create_quantized_autoencoder(input_dim, latent_dim, output_dim):
+def create_quantized_autoencoder(input_dim, latent_dim, output_dim, num_embeddings:int=128):
     encoder = create_encoder(input_dim, latent_dim)
     decoder = create_decoder(latent_dim, output_dim)
-    quantizer = VectorQuantizer(num_embeddings=128, embedding_dim=latent_dim)
+    quantizer = VectorQuantizer(num_embeddings=num_embeddings, embedding_dim=latent_dim)
+    
+    encoder.summary()
+    decoder.summary()
     
     inputs = Input(shape=(input_dim,))
     encoder_outputs = encoder(inputs)
     encoder_outputs_quantized = quantizer(encoder_outputs)
     
     decoder_output = decoder(encoder_outputs_quantized)
-    # decoder_output = decoder(encoder_outputs)       # here to make a shortcut to skip quant layer
     
     vector_quant_autoencoder = Model(inputs=inputs, outputs=decoder_output, name="vector_quantized_autoencoder")
-    # vector_quant_autoencoder.compile(loss=vae_loss, optimizer="adam")
     return vector_quant_autoencoder
 
 
@@ -136,7 +148,7 @@ class VQVAETrainer(Model):
         self.input_dim = input_dim
         self.num_embeddings = num_embeddings
 
-        self.vqvae = create_quantized_autoencoder(self.input_dim, self.latent_dim, self.input_dim)
+        self.vqvae = create_quantized_autoencoder(self.input_dim, self.latent_dim, self.input_dim, self.num_embeddings)
         self.vqvae.summary()
 
         self.total_loss_tracker = keras.metrics.Mean(name="total_loss")
@@ -181,11 +193,15 @@ class VQVAETrainer(Model):
         }
     
     
-    def predict(self, x):
-        return self.vqvae.predict(x)
+    def call(self, x):
+        return self.vqvae(x)
+    
+    
+    def save_model_weights(self, file_path):
+        self.vqvae.save_weights(file_path)
 
 
-def train_vq_vae(inputs_dims:int, latent_dims:int, plot_figure:bool=True):
+def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, plot_figure:bool=True):
     x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     x_train = np.squeeze(x_train)
     x_test = np.squeeze(x_test)
@@ -195,13 +211,15 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, plot_figure:bool=True):
     
     variance = np.var(x_train)
     
-    vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims)
+    vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, num_embeddings=num_embeddings)
     vq_vae_trainer.compile(optimizer="adam")
     
-    x_train_hat = vq_vae_trainer.predict(x_train)
+    vq_vae_trainer.build((None, inputs_dims))
     
+    x_train_hat = vq_vae_trainer.predict(x_train)
+        
     vq_vae_trainer.fit(x=x_train, epochs=500, batch_size=64)
-    vq_vae_trainer.save_weights("models/vq_vae_models/vq_vae.h5")
+    vq_vae_trainer.save_model_weights(f"models/vq_vae_models/vq_vae_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}.h5")
     x_test_pred = vq_vae_trainer.predict(x_test)
     mse = mean_squared_error(x_test, x_test_pred)
     
@@ -227,7 +245,7 @@ if __name__ == "__main__":
     # print(vq_ae.losses)
     # vq_ae.summary()
     
-    train_vq_vae(inputs_dims=40, latent_dims=10, plot_figure=True)
+    train_vq_vae(inputs_dims=40, latent_dims=10, num_embeddings=64, plot_figure=True)
     # x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     # encoder = create_encoder(input_dim=40, latent_dim=10)
     # quant_layer = VectorQuantizer(num_embeddings=128, embedding_dim=10)

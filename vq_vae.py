@@ -8,8 +8,8 @@ from tensorflow.keras.layers import Input, Layer, Activation, Dense, Flatten, Dr
 from tensorflow.keras import losses
 from tensorflow.keras import backend as K
 from tensorflow.python.keras.utils import losses_utils
+from sonnet.nets import VectorQuantizerEMA
 
-from tensorflow.python.
 
 from sklearn.metrics import mean_squared_error
 

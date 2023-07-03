@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+import h5py
 
 import tensorflow as tf
 from tensorflow.keras.layers import Input, Dense
@@ -33,13 +35,18 @@ def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int, plot_f
     
     x_train = np.squeeze(x_train)
     x_test = np.squeeze(x_test)
+        
+    history = autoencoder.fit(x_train, x_train, epochs=500, batch_size=64)
+    file_name = f"vq_vae_ema_input_{inputs_dims}_latent_{latent_dims}.h5"
+    history_save_path = os.path.join("training_history", "ae", file_name)
+    with h5py.File(history_save_path, "w") as hf:
+        for key, value in history.history.items():
+            hf.create_dataset(key, data=value)
     
-    scaler = MinMaxScaler()
-    
-    autoencoder.fit(x_train, x_train, epochs=500, batch_size=64)
     recover_test = autoencoder.predict(x_test)
     mse_rescale = mean_squared_error(recover_test, x_test)
-    autoencoder.save("models/ae_models/autoencoder.h5")
+    model_save_path = os.path.join("models", "ae_models", file_name)
+    autoencoder.save(model_save_path)
     print(f"the MSE after rescale is {mse_rescale}")
     
     if plot_figure:
@@ -57,4 +64,4 @@ def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int, plot_f
 
 
 if __name__ == "__main__":
-    train_autoencoder_input_compression(inputs_dims=40, latent_dims=5)
+    train_autoencoder_input_compression(inputs_dims=40, latent_dims=10)

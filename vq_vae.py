@@ -296,8 +296,8 @@ if __name__ == "__main__":
     # print(vq_ae.losses)
     # vq_ae.summary()
     
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, with_batch_norm=False, plot_figure=True)
-    # test_vq_vae(inputs_dims=40, latent_dims=10, num_embeddings=128)
+    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, with_batch_norm=False, plot_figure=True)
+    test_vq_vae(inputs_dims=40, latent_dims=10, num_embeddings=128)
     
     # x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     # encoder = create_encoder(input_dim=40, latent_dim=10)

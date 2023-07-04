@@ -56,7 +56,7 @@ def create_decoder(latent_dim, output_dim):
     return decoder
     
     
-def create_quantized_autoencoder(input_dim, latent_dim, output_dim, number_quant_bits):
+def create_uniform_quantized_autoencoder(input_dim, latent_dim, output_dim, number_quant_bits):
     encoder = create_encoder(input_dim, latent_dim)
     decoder = create_decoder(latent_dim, output_dim)
     uniform_quantizer = QuantizationLayer(num_bits=number_quant_bits)
@@ -82,7 +82,7 @@ class VQVAETrainer(Model):
         self.input_dim = input_dim
         self.number_quant_bits = num_quant_bits
 
-        self.vqvae = create_quantized_autoencoder(self.input_dim, self.latent_dim, self.input_dim, self.number_quant_bits)
+        self.vqvae = create_uniform_quantized_autoencoder(self.input_dim, self.latent_dim, self.input_dim, self.number_quant_bits)
         self.vqvae.summary()
 
         self.total_loss_tracker = keras.metrics.Mean(name="total_loss")

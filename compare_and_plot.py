@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from Interference_prediction import data_preprocessing
 from vq_vae import create_quantized_autoencoder
 from vq_vae_ema import create_quantized_autoencoder_EMA
-from auto_encoder_quant_latent import create_quantized_autoencoder
+from auto_encoder_quant_latent import create_uniform_quantized_autoencoder
 
 
 def ae_uniform_quant_test(x_test, input_dims, latent_dims, num_quant_bits, weights_path):

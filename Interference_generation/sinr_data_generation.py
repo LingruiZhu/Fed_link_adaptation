@@ -44,8 +44,6 @@ def generate_sinr_data():
     channel_BS = ChannelModel(path_loss_factor=2.5, number_paths=10, ue_speed=2, carrier_freq=3e9, shadowing_map=shadowing_map,\
         delta=map_delta, step_size=map_step_size, map_width=map_width, map_length=map_length)
     
-    
-    
     # write the loop for updating postion of sensors and calculate SINR
     num_samples = 10000
     sample_frequency = 1000
@@ -99,7 +97,8 @@ def generate_sinr_data():
     file_single_ue.create_dataset(name="SINR_dB", data=np.array(sinr_dB_list))
     file_single_ue.create_dataset(name="Interference_power", data=np.array(interference_list))
     file_single_ue.close()
-        
+
+
 if __name__ == "__main__":
     generate_sinr_data()
     

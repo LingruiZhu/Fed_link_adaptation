@@ -10,8 +10,6 @@ from tensorflow.keras.layers import Input, Layer, Activation, Dense, BatchNormal
 from tensorflow.keras import losses
 from tensorflow.keras import backend as K
 from tensorflow.python.keras.utils import losses_utils
-from sonnet.nets import VectorQuantizerEMA
-
 
 from sklearn.metrics import mean_squared_error
 
@@ -136,7 +134,7 @@ class VQVAETrainer(Model):
         self.vqvae.save_weights(file_path)
 
 
-def train_vq_vae(inputs_dims:int, latent_dims:int, number_quant_bits, plot_figure:bool=True):
+def train_vq_vae(inputs_dims:int, latent_dims:int, number_quant_bits:int, plot_figure:bool=True):
     x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     x_train = np.squeeze(x_train)
     x_test = np.squeeze(x_test)
@@ -146,7 +144,7 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, number_quant_bits, plot_figur
     
     variance = np.var(x_train)
     
-    vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims)
+    vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, number_quant_bits)
     vq_vae_trainer.compile(optimizer="adam")
     
     vq_vae_trainer.build((None, inputs_dims))

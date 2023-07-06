@@ -6,9 +6,11 @@ from vq_vae import create_quantized_autoencoder
 from vq_vae_ema import create_quantized_autoencoder_EMA
 from auto_encoder_quant_latent import create_uniform_quantized_autoencoder
 
+from tabulate import tabulate
+
 
 def ae_uniform_quant_test(x_test, input_dims, latent_dims, num_quant_bits, weights_path):
-    ae_uniform_quant = create_quantized_autoencoder(input_dims, latent_dims, input_dims, num_quant_bits)
+    ae_uniform_quant = create_uniform_quantized_autoencoder(input_dims, latent_dims, input_dims, num_quant_bits)
     ae_uniform_quant.load_weights(weights_path)
     x_test_recover = ae_uniform_quant.predict(x_test)
     x_test_recover_1d = x_test_recover.flatten()
@@ -58,15 +60,20 @@ def compare_recover_performance():
     vq_vae_ema_recover, vq_vae_ema_abs_devation = vq_vae_ema_test(x_test, input_dims, latent_dims, num_embeddings, vq_vae_ema_weights_file)
     
     x_test_1d = x_test.flatten()
+    
+    print(tabulate([["VQ-VAE", np.mean(vq_vae_abs_devation**2)], ["VQ-VAE-EMA", np.mean(vq_vae_ema_abs_devation**2)], ["AE-Uniform-quant", np.mean(ae_quant_abs_devation**2)]], headers=["Method", "ABS"]))
+    
     plt.figure()
     plt.plot(x_test_1d[100:500], "r", label="Ture SINR")
     plt.plot(vq_vae_recover[100:500], "b", label="VQ-VAE")
     plt.plot(vq_vae_ema_recover[100:500], "g", label="VQ-VAE-EMA")
     plt.plot(ae_quant_recover[100:500], "m", label="AE-Uniform-quant")
     plt.ylabel("SINR (dB)")
-    plt.xlabel("Time(ms)")
+    plt.xlabel("Time (ms)")
     plt.grid()
     plt.legend()
+    plt.savefig("figures/estimation/estimation.pdf", format="pdf", bbox_inches="tight")
+    plt.show()
     plt.show()
     
 

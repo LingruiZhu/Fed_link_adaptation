@@ -1,33 +1,36 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
+import os
+import h5py
 
 from tensorflow import keras
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Layer, Activation, Dense, BatchNormalization
 from tensorflow.keras import losses
 from tensorflow.keras import backend as K
+from tensorflow.python.keras.utils import losses_utils
 
+from tensorflow.python.training import moving_averages
 
 
 from sklearn.metrics import mean_squared_error
 
 from Interference_prediction import data_preprocessing
 
-import pdb 
 
 
-
-class VectorQuantizer_cluster(Layer):
-    def __init__(self, num_embeddings, embedding_dim, beta=0.25, **kwargs):
+class VectorQuantizer_EMA(Layer):
+    def __init__(self, num_embeddings, embedding_dim, beta=1, ema_decay=0.85, **kwargs):
         super().__init__(**kwargs)
         self.embedding_dim = embedding_dim
         self.num_embeddings = num_embeddings
 
         # The `beta` parameter is best kept between [0.25, 2] as per the paper.
         self.beta = beta
+        self.ema_decay = ema_decay
         
-        self.is_training_cluster = True
+        self.is_training_ema = True
 
         # Initialize the embeddings which we will quantize.
         w_init = tf.random_uniform_initializer()
@@ -35,22 +38,22 @@ class VectorQuantizer_cluster(Layer):
             initial_value=w_init(shape=(self.embedding_dim, self.num_embeddings), dtype="float32"),
             trainable=True,
             name="embeddings_vqvae")
-        self.sample_count = tf.Variable(
+        self.ema_count = tf.Variable(
             initial_value=tf.zeros(shape=(self.num_embeddings,), dtype="float32"),
             trainable=False,
-            name="cluster_count_vqvae")
+            name="ema_count_vqvae")
         self.embeddings_sum = tf.Variable(
             initial_value=tf.zeros(shape=(self.embedding_dim, self.num_embeddings), dtype="float32"),
             trainable=False,
             name="embeddings_sum_vqvae")
 
     
-    def enable_training_cluster(self):
-        self.is_training_cluster = True
+    def enable_training_ema(self):
+        self.is_training_ema = True
     
     
-    def disable_training_cluster(self):
-        self.is_training_cluster = False
+    def disable_training_ema(self):
+        self.is_training_ema = False
         
 
     def call(self, x):
@@ -67,8 +70,8 @@ class VectorQuantizer_cluster(Layer):
         # Reshape the quantized values back to the original input shape
         quantized = tf.reshape(quantized, input_shape)
         
-        if self.is_training_cluster:
-            self.update_cluster_embeddings(x)
+        if self.is_training_ema:
+            self.update_ema_embeddings(x)
 
         # Calculate vector quantization loss and add that to the layer. You can learn more
         # about adding losses to different layers here:
@@ -83,7 +86,7 @@ class VectorQuantizer_cluster(Layer):
         return quantized
 
 
-    def update_cluster_embeddings(self, inputs):
+    def update_ema_embeddings(self, inputs):
         flattened_inputs = tf.reshape(inputs, [-1, self.embedding_dim])
 
         # Calculate the encoding indices based on the flattened inputs
@@ -93,15 +96,15 @@ class VectorQuantizer_cluster(Layer):
         # Calculate the count of each codebook vector based on the encoding indices
         count = tf.reduce_sum(encodings, 0)
 
-        # Update the clustering count
-        self.sample_count.assign(self.sample_count + count)
+        # Update the EMA count using the decay factor
+        self.ema_count.assign((1.0 - self.ema_decay) * self.ema_count + self.ema_decay * count)
 
-        # Calculate the sum of embeddings
+        # Calculate the EMA of the codebook embeddings
         embeddings_sum = tf.matmul(flattened_inputs, encodings, transpose_a=True)
-        updated_embeddings_sum = self.embeddings_sum + embeddings_sum
+        updated_embeddings_sum = (1.0 - self.ema_decay) * self.embeddings_sum + self.ema_decay * embeddings_sum
 
         # Normalize the updated codebook embeddings using the count
-        normalized_embeddings = updated_embeddings_sum / tf.maximum(self.sample_count, 1e-5)
+        normalized_embeddings = updated_embeddings_sum / tf.maximum(self.ema_count, 1e-5)
 
         # Assign the normalized embeddings to the codebook
         self.embeddings.assign(normalized_embeddings)
@@ -136,7 +139,7 @@ class VectorQuantizer_cluster(Layer):
     
     
     def get_config(self):
-        config = super(VectorQuantizer_cluster, self).get_config()
+        config = super(VectorQuantizer_EMA, self).get_config()
         config.update({
             'num_embeddings': self.num_embeddings,
             'embedding_dim': self.embedding_dim
@@ -181,21 +184,19 @@ def create_decoder(latent_dim, output_dim):
     return decoder
     
     
-def create_quantized_autoencoder_cluster(input_dim, latent_dim, output_dim, num_embeddings:int=128, with_batch_normalization:bool=False):
+def create_quantized_autoencoder_EMA(input_dim, latent_dim, output_dim, num_embeddings:int=128, ema_decay:float=0.99, commitment_factor:float=0.25):
     encoder = create_encoder(input_dim, latent_dim)
     decoder = create_decoder(latent_dim, output_dim)
-    quantizer = VectorQuantizer_cluster(num_embeddings=num_embeddings, embedding_dim=latent_dim)
+    quantizer = VectorQuantizer_EMA(num_embeddings=num_embeddings, embedding_dim=latent_dim, ema_decay=ema_decay, beta=commitment_factor)
     bn_layer = BatchNormalization()
     
-    quantizer.enable_training_cluster()
+    quantizer.enable_training_ema()
     
     encoder.summary()
     decoder.summary()
     
     inputs = Input(shape=(input_dim,))
     encoder_outputs = encoder(inputs)
-    if with_batch_normalization:
-        encoder_outputs = bn_layer(encoder_outputs)
     
     encoder_outputs_quantized = quantizer(encoder_outputs)
     
@@ -206,14 +207,14 @@ def create_quantized_autoencoder_cluster(input_dim, latent_dim, output_dim, num_
 
 
 class VQVAETrainer(Model):
-    def __init__(self, train_variance, input_dim, latent_dim=10, num_embeddings=1, with_batch_normalization:bool=False, **kwargs):
+    def __init__(self, train_variance, input_dim, latent_dim=10, num_embeddings=1, ema_decay:float=0.99, commitment_factor=0.25, **kwargs):
         super().__init__(**kwargs)
         self.train_variance = train_variance
         self.latent_dim = latent_dim
         self.input_dim = input_dim
         self.num_embeddings = num_embeddings
 
-        self.vqvae = create_quantized_autoencoder_cluster(self.input_dim, self.latent_dim, self.input_dim, self.num_embeddings, with_batch_normalization)
+        self.vqvae = create_quantized_autoencoder_EMA(self.input_dim, self.latent_dim, self.input_dim, self.num_embeddings, ema_decay, commitment_factor=commitment_factor)
         self.vqvae.summary()
 
         self.total_loss_tracker = keras.metrics.Mean(name="total_loss")
@@ -259,15 +260,15 @@ class VQVAETrainer(Model):
         }
     
     
-    def call(self, x, is_cluster_updating:bool=True):
-        return self.vqvae(x, is_cluster_updating)
+    def call(self, x, is_ema_updating:bool=True):
+        return self.vqvae(x, is_ema_updating)
     
     
     def save_model_weights(self, file_path):
         self.vqvae.save_weights(file_path)
 
 
-def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, with_batch_normalization:bool=False, plot_figure:bool=True):
+def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitment_factor:float, ema_decay:float, plot_figure:bool=True):
     x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     x_train = np.squeeze(x_train)
     x_test = np.squeeze(x_test)
@@ -277,19 +278,25 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, with_batch_no
     
     variance = np.var(x_train)
     
-    vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, num_embeddings=num_embeddings, with_batch_normalization=with_batch_normalization)
+    vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, num_embeddings=num_embeddings, ema_decay=ema_decay, commitment_factor=commitment_factor)
     vq_vae_trainer.compile(optimizer="adam")
     
     vq_vae_trainer.build((None, inputs_dims))
     
     x_train_hat = vq_vae_trainer.predict(x_train)
         
-    vq_vae_trainer.fit(x=x_train, epochs=1000, batch_size=64)
-    vq_vae_trainer.save_model_weights(f"models/vq_vae_cluster_models/vq_vae_cluster_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_with_BN_{with_batch_normalization}.h5")
+    history = vq_vae_trainer.fit(x=x_train, epochs=1000, batch_size=64)
+    file_name = f"vq_vae_ema_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_ema_decay_{ema_decay}_beta_{commitment_factor}.h5"
+    weights_path = os.path.join("models", "vq_vae_ema_models", file_name)
+    vq_vae_trainer.save_model_weights(weights_path)
+    history_path = os.path.join("training_history", "vq_vae_ema", file_name)
+    with h5py.File(history_path, "w") as hf:
+        for key, value in history.history.items():
+            hf.create_dataset(key, data=value)
     
-    # disable 
-    vq_cluster_layer = vq_vae_trainer.vqvae.get_layer("vector_quantizer_cluster")
-    vq_cluster_layer.disable_training_cluster()
+    # disable ema updates
+    vq_ema_layer = vq_vae_trainer.vqvae.get_layer("vector_quantizer_ema")
+    vq_ema_layer.disable_training_ema()
     x_test_pred = vq_vae_trainer.predict(x_test)
     mse = mean_squared_error(x_test, x_test_pred)
     
@@ -310,14 +317,14 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, with_batch_no
 
 def test_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, plot_figure:bool=True):
     # load model from file
-    vq_vae_cluster = create_quantized_autoencoder_cluster(inputs_dims, latent_dims, inputs_dims, num_embeddings)
-    # vq_vae_cluster.load_weights("models/vq_vae_ema_models/vq_vae_ema_input_40_latent_10_num_embeddings_128.h5")
-    vq_cluster_layer = vq_vae_cluster.get_layer("vector_quantizer_cluster")
-    vq_cluster_layer.disable_training_cluster()
+    vq_vae_ema = create_quantized_autoencoder_EMA(inputs_dims, latent_dims, inputs_dims, num_embeddings)
+    vq_vae_ema.load_weights("models/vq_vae_ema_models/vq_vae_ema_input_40_latent_10_num_embeddings_128.h5")
+    vq_ema_layer = vq_vae_ema.get_layer("vector_quantizer_ema")
+    vq_ema_layer.disable_training_ema()
     
     # prepare dat
     _, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
-    x_test_recover = vq_vae_cluster.predict(x_test)
+    x_test_recover = vq_vae_ema.predict(x_test)
     
     if plot_figure:
         x_test_recover_1d = x_test_recover[:10,:].flatten()
@@ -337,6 +344,8 @@ if __name__ == "__main__":
 
     # test_vq_vae(inputs_dims=40, latent_dims=10, num_embeddings=128)
     
-    train_vq_vae(inputs_dims=40, latent_dims=10, num_embeddings=128, plot_figure=True, with_batch_normalization=False)
+    ema_decay = 0.99
+    beta = 0.25
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, commitment_factor=beta, plot_figure=True, ema_decay=ema_decay)
 
     

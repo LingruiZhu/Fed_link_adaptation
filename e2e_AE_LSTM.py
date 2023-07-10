@@ -6,7 +6,7 @@ from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input
 
 from Interference_prediction.lstm_model import build_lstm_predict_model
-from auto_encoder import create_autoencoder
+from compress_recover.auto_encoder import create_autoencoder
 from Interference_prediction.data_preprocessing import prepare_data
 
 

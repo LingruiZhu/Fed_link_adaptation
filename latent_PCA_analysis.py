@@ -16,8 +16,7 @@ from tensorflow.keras.layers import Input
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 
-
-from vq_vae import create_quantized_autoencoder
+from compress_recover.vq_vae import create_quantized_autoencoder
 from Interference_prediction import data_preprocessing
 
 
@@ -105,8 +104,6 @@ def vae_latent_pca_analyze():
     
     # Show the plot
     plt.show()
-
-    
     
     
 if __name__ == "__main__":

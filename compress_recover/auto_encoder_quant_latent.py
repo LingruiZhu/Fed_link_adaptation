@@ -1,3 +1,6 @@
+import sys 
+sys.path.append("/home/zhu/Codes/Fed_Link_Adaptation")
+
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -134,7 +137,7 @@ class VQVAETrainer(Model):
         self.vqvae.save_weights(file_path)
 
 
-def train_vq_vae(inputs_dims:int, latent_dims:int, number_quant_bits:int, plot_figure:bool=True):
+def train_vq_vae(inputs_dims:int, latent_dims:int, number_quant_bits:int, optimizer:str="RMSprop", plot_figure:bool=True):
     x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     x_train = np.squeeze(x_train)
     x_test = np.squeeze(x_test)
@@ -145,16 +148,16 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, number_quant_bits:int, plot_f
     variance = np.var(x_train)
     
     vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, number_quant_bits)
-    vq_vae_trainer.compile(optimizer="adam")
+    vq_vae_trainer.compile(optimizer=optimizer)
     
     vq_vae_trainer.build((None, inputs_dims))
     
     x_train_hat = vq_vae_trainer.predict(x_train)
         
-    history = vq_vae_trainer.fit(x=x_train, epochs=1000, batch_size=64)
+    history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=500, batch_size=64)
     
     # save training history and weights
-    file_name = f"vq_vae_input_{inputs_dims}_latent_{latent_dims}_num_quant_bits_{number_quant_bits}.h5"
+    file_name = f"vq_vae_input_{inputs_dims}_latent_{latent_dims}_num_quant_bits_{number_quant_bits}_optimizer_{optimizer}.h5"
     history_path = os.path.join("training_history", "vq_vae_uniform_quant", file_name)
     with h5py.File(history_path, "w") as hf:
         for key, value in history.history.items():
@@ -180,7 +183,7 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, number_quant_bits:int, plot_f
     
 
 if __name__ == "__main__":
-    train_vq_vae(inputs_dims=40, latent_dims=10, number_quant_bits=4, plot_figure=True)
+    train_vq_vae(inputs_dims=40, latent_dims=20, number_quant_bits=4, plot_figure=True, optimizer="RMSprop")
 
 
 

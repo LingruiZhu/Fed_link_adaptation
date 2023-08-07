@@ -5,7 +5,7 @@ import os
 import h5py
 
 import sys 
-sys.path.append("/Users/lingrui/Codes/Fed_link_adaptation")
+sys.path.append("/home/zhu/Codes/Fed_Link_Adaptation")
 
 from tensorflow import keras
 from tensorflow.keras.models import Model
@@ -13,7 +13,7 @@ from tensorflow.keras.layers import Input, Layer, Activation, Dense, BatchNormal
 from tensorflow.keras import losses
 from tensorflow.keras import backend as K
 from tensorflow.python.keras.utils import losses_utils
-
+from tensorflow.keras.callbacks import EarlyStopping
 
 from sklearn.metrics import mean_squared_error
 
@@ -39,6 +39,14 @@ class VectorQuantizer(Layer):
             trainable=True,
             name="embeddings_vqvae",
         )
+        self.embedding_sample_count = tf.Variable(
+            initial_value=tf.zeros(shape=(self.num_embeddings,), dtype="float32"),
+            trainable=False,
+            name="embedding_sampole_count")
+        self.embedding_sample_accumulative_count = tf.Variable(
+            initial_value=tf.zeros(shape=(self.num_embeddings,), dtype="float32"),
+            trainable=False,
+            name="embedding_sample_accumulative_count")
 
 
     def call(self, x):
@@ -69,7 +77,21 @@ class VectorQuantizer(Layer):
         # Straight-through estimator.
         quantized = x + tf.stop_gradient(quantized - x)
         return quantized
+    
+    
+    def track_embedding_space(self, x):
+        input_shape = tf.shape(x)
+        flattened = tf.reshape(x, [-1, self.embedding_dim])
 
+        # Quantization.
+        encoding_indices = self.get_code_indices(flattened)
+        encodings = tf.one_hot(encoding_indices, self.num_embeddings)
+        
+        # Count how many samples will be assigned to which embeddings.
+        count = tf.reduce_sum(encodings, 0)
+        self.embedding_sample_count.assign(count)
+        self.embedding_sample_accumulative_count.assign(self.embedding_sample_accumulative_count + count)
+         
 
     def get_code_indices(self, flattened_inputs):
         # Calculate L2-normalized distance between the inputs and the codes.
@@ -84,14 +106,18 @@ class VectorQuantizer(Layer):
         encoding_indices = tf.argmin(distances, axis=1)
         return encoding_indices
     
-    
+        
     def get_config(self):
         config = super(VectorQuantizer, self).get_config()
         config.update({
             'num_embeddings': self.num_embeddings,
-            'embedding_dim': self.embedding_dim
+            'embedding_dim': self.embedding_dim,
+            'embedding_sample_count': self.embedding_sample_count.numpy().tolist(),
+            'embedding_sample_accumulative_count': self.embedding_sample_accumulative_count.numpy().tolist(),
         })
         return config 
+    
+    
 
 
 # def calculate_vae_loss(encoder_output, quantized_latent_variable, variance, beta):
@@ -181,6 +207,13 @@ class VQVAETrainer(Model):
             self.vq_commitment_loss_tracker
         ]
 
+
+    def get_latent_vector(self, x):
+        x1 = self.vqvae.layers[0](x)
+        latent_vec = self.vqvae.layers[1](x1)
+        return latent_vec
+    
+
     def train_step(self, x):
         with tf.GradientTape() as tape:
             # Outputs from the VQ-VAE.
@@ -198,13 +231,17 @@ class VQVAETrainer(Model):
         # Backpropagation.
         grads = tape.gradient(total_loss, self.vqvae.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.vqvae.trainable_variables))
+        
+        # track latent variable and embedding space
+        latent_var = self.get_latent_vector(x)
+        self.vqvae.layers[2].track_embedding_space(latent_var)
 
         # Loss tracking.
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
         # self.vq_loss_tracker.update_state(sum(self.vqvae.losses))
-        self.vq_codebook_loss_tracker.update_state(self.vqvae.losses[0])
-        self.vq_commitment_loss_tracker.update_state(self.vqvae.losses[1])
+        self.vq_codebook_loss_tracker.update_state(codebook_loss)
+        self.vq_commitment_loss_tracker.update_state(commitment_loss)
         
         # Log results.
         return {
@@ -220,10 +257,26 @@ class VQVAETrainer(Model):
     
     
     def save_model_weights(self, file_path):
+        self.vqvae.layers[2].embedding_sample_count.trainable = True
+        self.vqvae.layers[2].embedding_sample_accumulative_count.trainable = True
         self.vqvae.save_weights(file_path)
 
 
-def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, with_batch_norm:bool=False, plot_figure:bool=True):
+
+class CountActivdeEmbeddings(keras.callbacks.Callback):
+    def __init__(self, vqvae):
+        super().__init__()
+        self.vqvae = vqvae
+        self.num_active_embeddings_list = []
+
+
+    def on_epoch_end(self, batch, logs=None):
+        num_active_embeddings = tf.math.count_nonzero(self.vqvae.layers[2].embedding_sample_accumulative_count)
+        self.num_active_embeddings_list.append(tf.keras.backend.eval(num_active_embeddings))
+        
+        
+    
+def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, with_batch_norm:bool=False, plot_figure:bool=True, optimizer:str="adam"):
     x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     x_train = np.squeeze(x_train)
     x_test = np.squeeze(x_test)
@@ -234,20 +287,37 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, with_batch_no
     variance = np.var(x_train)
     
     vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, num_embeddings=num_embeddings, with_bn_layer=with_batch_norm)
-    vq_vae_trainer.compile(optimizer="adam")
+    vq_vae_trainer.compile(optimizer=optimizer)
     
     vq_vae_trainer.build((None, inputs_dims))
-            
-    history = vq_vae_trainer.fit(x=x_train, epochs=1000, batch_size=64)
+    
+    # Custom callback to track the learning rate
+    learning_rates = list()
+    class LearningRateTracker(tf.keras.callbacks.Callback):
+        def on_epoch_end(self, batch, logs=None):
+            # Get the current learning rate from the optimizer
+            current_lr = tf.keras.backend.get_value(self.model.optimizer.lr)
+            # Append the learning rate to the list
+            learning_rates.append(current_lr)
+    
+    # Define callback to track the embedding space
+    active_embedding_tracker = CountActivdeEmbeddings(vq_vae_trainer.vqvae)
+    
+    early_stopping = EarlyStopping(monitor="val_total_loss", patience=20, mode="min")
+    history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=500, batch_size=64, callbacks=[LearningRateTracker(), active_embedding_tracker])
+    num_active_embeddings_list = active_embedding_tracker.num_active_embeddings_list
     
     # save training history and weights
-    file_name = f"vq_vae_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_with_BN_{with_batch_norm}.h5"
+    file_name = f"vq_vae_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_with_BN_{with_batch_norm}_{optimizer}.h5"
     history_path = os.path.join("training_history", "vq_vae", file_name)
     with h5py.File(history_path, "w") as hf:
         for key, value in history.history.items():
             hf.create_dataset(key, data=value)
-    weights_path = os.path.join("models", "vq_vae_models", file_name)
+        hf.create_dataset("learning_rates", data=learning_rates)
+        hf.create_dataset("num_active_embeddings", data=num_active_embeddings_list)
+    weights_path = os.path.join("models", "vq_vae_models_num_embeddings_compare", file_name)
     vq_vae_trainer.save_model_weights(weights_path)
+    print("Model weights have been saved to the path: " + weights_path)
     x_test_pred = vq_vae_trainer.predict(x_test)
     mse = mean_squared_error(x_test, x_test_pred)
     
@@ -290,22 +360,7 @@ def test_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, plot_figure:bo
     return mse
 
 if __name__ == "__main__":
-    # input_dim = 40
-    # latent_dim = 10
-    # vq_ae = create_quantized_autoencoder(input_dim=input_dim, latent_dim=latent_dim, output_dim=input_dim)
-    # print(vq_ae.losses)
-    # vq_ae.summary()
-    
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, with_batch_norm=False, plot_figure=True)
-    # test_vq_vae(inputs_dims=40, latent_dims=10, num_embeddings=128)
-    
-    # x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
-    # encoder = create_encoder(input_dim=40, latent_dim=10)
-    # quant_layer = VectorQuantizer(num_embeddings=128, embedding_dim=10)
-    # decoder = create_decoder(latent_dim=10, output_dim=40)
-    
-    # encoder_output = encoder(x_train)
-    # encoder_output_quantized = quant_layer(encoder_output)
-    # decoder_output = decoder(encoder_output_quantized)
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, with_batch_norm=False, plot_figure=True, optimizer="RMSprop")
+
 
     

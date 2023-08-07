@@ -1,0 +1,46 @@
+import numpy as np
+import sys
+sys.path.append("/home/zhu/Codes/Fed_Link_Adaptation")
+import matplotlib.pyplot as plt
+
+from Interference_prediction import data_preprocessing
+from compare_result.compare_and_plot import vq_vae_test, vq_vae_ema_test
+
+
+def vq_vae_num_embeddings_recover():
+    _, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
+    num_embeddings_list = [32, 64, 128, 256, 512, 1024]
+    num_bits = [5, 6, 7, 8, 9, 10]
+    input_dim = 40
+    latent_dim = 20
+    
+    recoverd_signal_list = list()
+    mse_list = list()
+    
+    for num_ebd in num_embeddings_list:
+        weight_file_path = f"models/vq_vae_models_num_embeddings_compare/vq_vae/vq_vae_input_40_latent_20_num_embeddings_{num_ebd}_with_BN_False_RMSprop.h5"
+        _, x_text_recover_1d, abs_debviation = vq_vae_test(x_test, input_dim, latent_dim, num_ebd, weight_file_path)
+        recoverd_signal_list.append(x_text_recover_1d)
+        mse = np.mean(abs_debviation**2)
+        mse_list.append(mse)
+    
+    plt.figure()
+    plt.plot(num_bits, mse_list)
+    plt.grid()
+    plt.xlabel("quantization bits")
+    plt.ylabel("MSE")
+    
+    x_test_1d = x_test.flatten()
+    plt.figure()
+    plt.plot(x_test_1d, label="ture_sequence")
+    for seq, num_ebd in zip(recoverd_signal_list, num_embeddings_list):
+        plt.plot(seq, label=f"{num_ebd} bits")
+    plt.grid()
+    plt.legend()
+    plt.show()
+    
+    return recoverd_signal_list, mse_list
+
+
+if __name__ == "__main__":
+    vq_vae_num_embeddings_recover()

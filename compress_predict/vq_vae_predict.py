@@ -1,5 +1,5 @@
 import sys 
-sys.path.append("/Users/lingrui/Codes/Fed_link_adaptation")
+sys.path.append("/home/zhu/Codes/Fed_Link_Adaptation")
 import os
 import matplotlib.pyplot as plt
 
@@ -102,7 +102,7 @@ class VQVAE_Pred_Trainer(Model):
         self.vqvae.save_weights(file_path)
 
 
-def train_vq_vae_predict(input_dim:int, latent_dim:int, output_dim:int, num_embeddings:int, with_batch_norm:bool=False, plot_figure:bool=True):
+def train_vq_vae_predict(input_dim:int, latent_dim:int, output_dim:int, num_embeddings:int, with_batch_norm:bool=False, optimizer:str="adam", plot_figure:bool=True):
     x_train, y_train, x_test, y_test, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     x_train = np.squeeze(x_train)
     y_train = np.squeeze(y_train)
@@ -115,13 +115,13 @@ def train_vq_vae_predict(input_dim:int, latent_dim:int, output_dim:int, num_embe
     variance = np.var(x_train)
     
     vq_vae_trainer = VQVAE_Pred_Trainer(variance, input_dim, latent_dim, num_embeddings=num_embeddings, with_bn_layer=with_batch_norm)
-    vq_vae_trainer.compile(optimizer="adam")
+    vq_vae_trainer.compile(optimizer=optimizer)
     
     vq_vae_trainer.build((None, input_dim))
             
     history = vq_vae_trainer.fit(x=x_train, y=y_train, epochs=200, batch_size=64)
     
-    file_name = f"vq_vae_input_{input_dim}_latent_{latent_dim}_num_embeddings_{num_embeddings}_with_BN_{with_batch_norm}.h5"
+    file_name = f"vq_vae_input_{input_dim}_latent_{latent_dim}_num_embeddings_{num_embeddings}_with_BN_{with_batch_norm}_{optimizer}.h5"
     history_path = os.path.join("training_history", "vq_vae_predict", file_name)
     with h5py.File(history_path, "w") as hf:
         for key, value in history.history.items():
@@ -133,7 +133,7 @@ def train_vq_vae_predict(input_dim:int, latent_dim:int, output_dim:int, num_embe
     
     if plot_figure:
         y_test_recover_1d = y_test_pred[:10,:].flatten()
-        y_test_true_1d = x_test[:10,:].flatten()
+        y_test_true_1d = y_test[:10,:].flatten()
         
         plt.figure()
         plt.plot(y_test_recover_1d, "r-x", label="recoverd_signal")
@@ -146,9 +146,8 @@ def train_vq_vae_predict(input_dim:int, latent_dim:int, output_dim:int, num_embe
     return mse
 
 
-
 if __name__ == "__main__":
-    train_vq_vae_predict(input_dim=40, latent_dim=10, output_dim=10, num_embeddings=128)
+    train_vq_vae_predict(input_dim=40, latent_dim=10, output_dim=10, num_embeddings=128, optimizer="RMSprop")
 
 
 

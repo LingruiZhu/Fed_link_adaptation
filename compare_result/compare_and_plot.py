@@ -27,8 +27,6 @@ def ae_uniform_quant_test(x_test, input_dims, latent_dims, num_quant_bits, weigh
 def vq_vae_test(x_test, input_dims, latent_dims, num_embeddings, weights_path):
     vq_vae = create_quantized_autoencoder(input_dims, latent_dims, input_dims, num_embeddings)
     vq_vae.load_weights(weights_path)
-    vq_vae.layers[1].embedding_sample_count.trainable = False
-    vq_vae.layers[1].embedding_sample_accumulative_count.trainable = False
     x_test_recover = vq_vae.predict(x_test)
     x_test_recover_1d = x_test_recover.flatten()
     x_test_1d = x_test.flatten()
@@ -60,10 +58,10 @@ def compare_recover_performance():
     ae_quant_latent_weights_file = "models/vq_vae_uniform_quant/vq_vae_input_40_latent_20_num_quant_bits_4_optimizer_RMSprop.h5"
     _, ae_quant_recover, ae_quant_abs_devation = ae_uniform_quant_test(x_test, input_dims, latent_dims, num_quant_bits, ae_quant_latent_weights_file)
     
-    vq_vae_weights_file = "models/vq_vae_models_num_embeddings_compare/vq_vae/vq_vae_input_40_latent_20_num_embeddings_256_with_BN_False_RMSprop.h5"
+    vq_vae_weights_file = "models/vq_vae_larger_init/vq_vae_input_40_latent_20_num_embeddings_256_with_BN_False_RMSprop.h5"
     _, vq_vae_recover, vq_vae_abs_devation = vq_vae_test(x_test, input_dims, latent_dims, num_embeddings, vq_vae_weights_file)
     
-    vq_vae_ema_weights_file = "models/vq_vae_ema_models/vq_vae_ema_input_40_latent_20_num_embeddings_256_ema_decay_0.99_beta_0.25.h5"
+    vq_vae_ema_weights_file = "models/vq_vae_ema_larger_init/vq_vae_ema_input_40_latent_20_num_embeddings_256_ema_decay_0.99_beta_0.25.h5"
     _, vq_vae_ema_recover, vq_vae_ema_abs_devation = vq_vae_ema_test(x_test, input_dims, latent_dims, num_embeddings, vq_vae_ema_weights_file)
     
     x_test_1d = x_test.flatten()
@@ -95,10 +93,10 @@ def compare_recover_prediction():
     ae_quant_latent_weights_file = "models/vq_vae_uniform_quant/vq_vae_input_40_latent_20_num_quant_bits_4_optimizer_RMSprop.h5"
     ae_quant_recover, ae_quant_recover_1d, ae_quant_abs_devation = ae_uniform_quant_test(x_test, input_dims, latent_dims, num_quant_bits, ae_quant_latent_weights_file)
     
-    vq_vae_weights_file = "models/vq_vae_models/vq_vae_input_40_latent_20_num_embeddings_256_with_BN_False_RMSprop.h5"
+    vq_vae_weights_file = "models/vq_vae_larger_init/vq_vae_input_40_latent_20_num_embeddings_256_with_BN_False_RMSprop.h5"
     vq_vae_recover, vq_vae_recover_1d, vq_vae_abs_devation = vq_vae_test(x_test, input_dims, latent_dims, num_embeddings, vq_vae_weights_file)
     
-    vq_vae_ema_weights_file = "models/vq_vae_ema_models/vq_vae_ema_input_40_latent_20_num_embeddings_256_ema_decay_0.99_beta_0.25.h5"
+    vq_vae_ema_weights_file = "models/vq_vae_ema_larger_init/vq_vae_ema_input_40_latent_20_num_embeddings_256_ema_decay_0.99_beta_0.25.h5"
     vq_vae_ema_recover, vq_vae_ema_recover_1d, vq_vae_ema_abs_devation = vq_vae_ema_test(x_test, input_dims, latent_dims, num_embeddings, vq_vae_ema_weights_file)
     
     lstm_model = load_model("Interference_prediction/models/lstm.h5")

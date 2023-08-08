@@ -67,4 +67,4 @@ def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int, optimi
 
 
 if __name__ == "__main__":
-    train_autoencoder_input_compression(inputs_dims=40, latent_dims=10, optimizer="RMSprop")
+    train_autoencoder_input_compression(inputs_dims=40, latent_dims=20, optimizer="RMSprop")

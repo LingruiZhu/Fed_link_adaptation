@@ -39,7 +39,7 @@ class VectorQuantizer_EMA(Layer):
         self.is_training_ema = True
 
         # Initialize the embeddings which we will quantize.
-        w_init = tf.random_uniform_initializer()
+        w_init = tf.random_uniform_initializer(-1,1)
         self.embeddings = tf.Variable(
             initial_value=w_init(shape=(self.embedding_dim, self.num_embeddings), dtype="float32"),
             trainable=True,
@@ -336,9 +336,9 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitmen
         
     file_name = f"vq_vae_ema_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_ema_decay_{ema_decay}_beta_{commitment_factor}.h5"
     # weights_path = os.path.join("models", "vq_vae_models_num_embeddings_compare", "vq_vae_ema", file_name)
-    weights_path = os.path.join("models", "vq_vae_ema_models", file_name)
+    weights_path = os.path.join("models", "vq_vae_ema_larger_init", file_name)
     vq_vae_trainer.save_model_weights(weights_path)
-    history_path = os.path.join("training_history", "vq_vae_ema", file_name)
+    history_path = os.path.join("training_history", "vq_vae_ema_larger_init", file_name)
 
     with h5py.File(history_path, "w") as hf:
         for key, value in history.history.items():
@@ -347,7 +347,7 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitmen
         hf.create_dataset("num_active_embeddings", data=num_active_embeddings_list)
     
     # disable ema updates
-    vq_ema_layer = vq_vae_trainer.vqvae.get_layer("vector_quantizer_ema")
+    vq_ema_layer = vq_vae_trainer.vqvae.layers[2]
     vq_ema_layer.disable_training_ema()
     x_test_pred = vq_vae_trainer.predict(x_test)
     mse = mean_squared_error(x_test, x_test_pred)
@@ -409,5 +409,10 @@ if __name__ == "__main__":
     
     ema_decay = 0.99
     beta = 0.25
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=16, commitment_factor=beta, plot_figure=True, ema_decay=ema_decay)
-    
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=16, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=32, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=64, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=128, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=512, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=1024, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)

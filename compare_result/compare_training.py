@@ -77,8 +77,8 @@ def plot_training_loss(vq_vae_history_path, vq_vae_ema_histroy_path, ae_history_
     
     
 if __name__ == "__main__":
-    vq_vae_loss = "training_history/vq_vae/vq_vae_input_40_latent_20_num_embeddings_256_with_BN_False_RMSprop.h5"
-    vq_vae_ema_loss = "training_history/vq_vae_ema/vq_vae_ema_input_40_latent_20_num_embeddings_256_ema_decay_0.99_beta_0.25.h5"
+    vq_vae_loss = "training_history/vq_vae_kmpp_init/vq_vae_input_40_latent_20_num_embeddings_32_init_kmpp_with_BN_False_RMSprop.h5"
+    vq_vae_ema_loss = "training_history/vq_vae_ema_larger_init/vq_vae_ema_input_40_latent_20_num_embeddings_32_ema_decay_0.99_beta_0.25.h5"
     ae_loss = "training_history/ae/vq_vae_ema_input_40_latent_10_optimizer_RMSprop.h5"
     plot_training_loss(vq_vae_loss, vq_vae_ema_loss, ae_loss)
     

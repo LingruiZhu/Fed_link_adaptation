@@ -24,6 +24,7 @@ from tensorflow.python.training import moving_averages
 from sklearn.metrics import mean_squared_error
 
 from Interference_prediction import data_preprocessing
+from kmpp_initialization.kmpp import kmeans_plusplus_initialization
 
 
 class VectorQuantizer_EMA(Layer):
@@ -38,7 +39,7 @@ class VectorQuantizer_EMA(Layer):
         
         self.is_training_ema = True
 
-        # Initialize the embeddings which we will quantize.
+        # Initialize the embeddings.
         w_init = tf.random_uniform_initializer(-1,1)
         self.embeddings = tf.Variable(
             initial_value=w_init(shape=(self.embedding_dim, self.num_embeddings), dtype="float32"),
@@ -220,8 +221,6 @@ class VQVAETrainer(Model):
         self.commitment_factor = commitment_factor
         
         self.vqvae = create_quantized_autoencoder_EMA(self.input_dim, self.latent_dim, self.input_dim, self.num_embeddings, ema_decay, commitment_factor=commitment_factor)
-        self.vqvae.summary()
-        print(self.vqvae.losses)
         
         self.learning_rates_list = list()
 
@@ -229,7 +228,7 @@ class VQVAETrainer(Model):
         self.reconstruction_loss_tracker = keras.metrics.Mean(
             name="reconstruction_loss"
         )
-        self.vq_loss_tracker = keras.metrics.Mean(name="vq_loss")
+        self.vq_loss_tracker = keras.metrics.Mean(name="codebook_loss")
 
 
     @property
@@ -256,7 +255,7 @@ class VQVAETrainer(Model):
             reconstruction_loss = (
                 tf.reduce_mean((x - reconstructions) ** 2) / self.train_variance
             )
-            total_loss = reconstruction_loss + self.commitment_factor * sum(self.vqvae.losses) # here commitment loss is added 
+            total_loss = reconstruction_loss + self.commitment_factor * sum(self.vqvae.losses) # here vavae only include commitment loss
 
         # Backpropagation w.r.t. total loss
         # grads = tape.gradient(total_loss, self.vqvae.trainable_variables)
@@ -282,9 +281,9 @@ class VQVAETrainer(Model):
 
         # Log results.
         return {
-            "loss": self.total_loss_tracker.result(),
+            "total_loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
-            "vqvae_loss": self.vq_loss_tracker.result(),
+            "codebook_loss": self.vq_loss_tracker.result(),
         }
     
     
@@ -313,14 +312,15 @@ class LearningRateCallback(keras.callbacks.Callback):
         self.num_active_embeddings_list.append((tf.keras.backend.eval(num_active_embeddings)))
 
 
-def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitment_factor:float, ema_decay:float, plot_figure:bool=True):
+def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitment_factor:float, embedding_init:str="random",\
+        ema_decay:float=0.99, plot_figure:bool=True):
+    
     x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
     x_train = np.squeeze(x_train)
     x_test = np.squeeze(x_test)
     
     x_train = np.array(x_train)
     x_test = np.array(x_test)
-    
     variance = np.var(x_train)
     
     vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, num_embeddings=num_embeddings, ema_decay=ema_decay, commitment_factor=commitment_factor)
@@ -328,18 +328,48 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitmen
     vq_vae_trainer.build((None, inputs_dims))
     
     learning_rate_callback = LearningRateCallback(vq_vae_trainer.vqvae)
-                
-    history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=500, batch_size=64, callbacks=[learning_rate_callback])
+    
+    if embedding_init == "random":
+        history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=500, batch_size=64, \
+            callbacks=[learning_rate_callback])
+    elif embedding_init == "kmpp":
+         # here define the encoder and assign new weights during the training process    
+        input_tensor = vq_vae_trainer.vqvae.layers[1].input
+        output_tensor = vq_vae_trainer.vqvae.layers[1].output
+        encoder_model = Model(inputs=input_tensor, outputs=output_tensor)
+        
+        history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=20, batch_size=64, callbacks=[learning_rate_callback])
+        
+        num_epochs = 480
+        for epoch in range(num_epochs):
+            print(f"Training epochs: {epoch}/{num_epochs}:")
+            history_single_epoch = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=1, batch_size=64, \
+                callbacks=[learning_rate_callback], verbose=1)
+            # save single epoch history to the pre-trained history
+            for key in history.history.keys():
+                history.history[key].append(history_single_epoch.history[key][0])
+            if epoch<=100 and epoch%20==0:
+                print(f"LOOK! HERE! Now embedding space is re-initialized at {epoch}-th epoch.")
+                # assign updates weights to encoder
+                encoder_model.set_weights(vq_vae_trainer.vqvae.layers[1].get_weights())
+                # use new latent variable to renitialize centriods using kmpp
+                latent_space = encoder_model.predict(x_train)
+                kmpp_centroids = kmeans_plusplus_initialization(data=latent_space, k=num_embeddings)
+                vq_vae_trainer.vqvae.layers[2].embeddings.assign(kmpp_centroids)
     
     learning_rate_list = learning_rate_callback.learning_rates_list
     num_active_embeddings_list = learning_rate_callback.num_active_embeddings_list
         
-    file_name = f"vq_vae_ema_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_ema_decay_{ema_decay}_beta_{commitment_factor}.h5"
-    # weights_path = os.path.join("models", "vq_vae_models_num_embeddings_compare", "vq_vae_ema", file_name)
-    weights_path = os.path.join("models", "vq_vae_ema_larger_init", file_name)
+    file_name = f"vq_vae_ema_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_init_{embedding_init}_ema_decay_{ema_decay}_beta_{commitment_factor}.h5"
+    if embedding_init == "random":  
+        weights_path = os.path.join("models", "vq_vae_ema", file_name)
+        history_path = os.path.join("training_history", "vq_vae_ema", file_name)
+    elif embedding_init == "kmpp":        
+        weights_path = os.path.join("models", "vq_vae_ema_kmpp_init", file_name)
+        history_path = os.path.join("training_history", "vq_vae_ema_kmpp_init", file_name)
+    
+    # save weights and training history
     vq_vae_trainer.save_model_weights(weights_path)
-    history_path = os.path.join("training_history", "vq_vae_ema_larger_init", file_name)
-
     with h5py.File(history_path, "w") as hf:
         for key, value in history.history.items():
             hf.create_dataset(key, data=value)
@@ -409,10 +439,13 @@ if __name__ == "__main__":
     
     ema_decay = 0.99
     beta = 0.25
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=16, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=32, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=64, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=128, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=512, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=1024, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay)
+    embeeding_init = "kmpp"
+    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=16, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
+    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=32, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
+    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=64, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
+    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=128, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
+    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
+    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=512, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
+    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=1024, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
+
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=128, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)

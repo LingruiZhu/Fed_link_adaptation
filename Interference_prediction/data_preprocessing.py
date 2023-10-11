@@ -91,7 +91,6 @@ def prepare_data_for_encoder_decoder_test(num_inputs, num_outputs):
 if __name__ == "__main__":
     file_path = "Interference_generation/interference_data/single_UE_data.h5"
     sinr_data, sinr_dB_data, interference_data = read_file(file_path)
-    print(np.shape(sinr_data)[0])
-    print(np.size(sinr_data))
+
     
     

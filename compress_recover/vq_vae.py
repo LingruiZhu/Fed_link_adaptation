@@ -25,7 +25,7 @@ import pdb
 
 
 class VectorQuantizer(Layer):
-    def __init__(self, num_embeddings, embedding_dim, beta=0.25, init:str="random", **kwargs):
+    def __init__(self, num_embeddings, embedding_dim, beta=0.25, **kwargs):
         super().__init__(**kwargs)
         self.embedding_dim = embedding_dim
         self.num_embeddings = num_embeddings
@@ -40,12 +40,6 @@ class VectorQuantizer(Layer):
             trainable=True,
             name="embeddings_vqvae",
         )
-        if init == "kmpp":
-            latent_file = "kmpp_initialization/latent_space.h5"
-            with h5py.File(latent_file, "r") as hf:
-                latent_variables = hf["latent_variables"][:]
-            kmpp_inits = kmeans_plusplus_initialization(latent_variables, self.num_embeddings)
-            self.embeddings.assign(kmpp_inits)
             
         self.embedding_sample_count = tf.Variable(
             initial_value=tf.zeros(shape=(self.num_embeddings,), dtype="float32"),
@@ -191,10 +185,10 @@ def create_decoder(latent_dim, output_dim):
     return decoder
     
     
-def create_quantized_autoencoder(input_dim, latent_dim, output_dim, num_embeddings:int=128, embeddings_init:str="random", with_batch_normalization:bool=False):
+def create_quantized_autoencoder(input_dim, latent_dim, output_dim, num_embeddings:int=128, with_batch_normalization:bool=False):
     encoder = create_encoder(input_dim, latent_dim)
     decoder = create_decoder(latent_dim, output_dim)
-    quantizer = VectorQuantizer(num_embeddings=num_embeddings, embedding_dim=latent_dim, init=embeddings_init)
+    quantizer = VectorQuantizer(num_embeddings=num_embeddings, embedding_dim=latent_dim)
     batch_norm_layer = BatchNormalization()
     
     encoder.summary()
@@ -213,14 +207,14 @@ def create_quantized_autoencoder(input_dim, latent_dim, output_dim, num_embeddin
 
 
 class VQVAETrainer(Model):
-    def __init__(self, train_variance, input_dim, latent_dim=10, num_embeddings=128, embedding_init:str="random", with_bn_layer:bool=False, **kwargs):
+    def __init__(self, train_variance, input_dim, latent_dim=10, num_embeddings=128, with_bn_layer:bool=False, **kwargs):
         super().__init__(**kwargs)
         self.train_variance = train_variance
         self.latent_dim = latent_dim
         self.input_dim = input_dim
         self.num_embeddings = num_embeddings
 
-        self.vqvae = create_quantized_autoencoder(self.input_dim, self.latent_dim, self.input_dim, self.num_embeddings, embedding_init, with_bn_layer)
+        self.vqvae = create_quantized_autoencoder(self.input_dim, self.latent_dim, self.input_dim, self.num_embeddings, with_bn_layer)
         self.vqvae.summary()
 
         self.total_loss_tracker = keras.metrics.Mean(name="total_loss")
@@ -279,7 +273,7 @@ class VQVAETrainer(Model):
         
         # Log results.
         return {
-            "loss": self.total_loss_tracker.result(),
+            "total_loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
             "codebook_loss": self.vq_codebook_loss_tracker.result(),
             "commitment_loss": self.vq_codebook_loss_tracker.result()
@@ -322,7 +316,7 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, embedding
     variance = np.var(x_train)
     
     vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, num_embeddings=num_embeddings, \
-        with_bn_layer=with_batch_norm, embedding_init=embedding_init)
+        with_bn_layer=with_batch_norm)
     vq_vae_trainer.compile(optimizer=optimizer)
     
     vq_vae_trainer.build((None, inputs_dims))
@@ -340,19 +334,49 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, embedding
     active_embedding_tracker = CountActivdeEmbeddings(vq_vae_trainer.vqvae)
     
     early_stopping = EarlyStopping(monitor="val_total_loss", patience=20, mode="min")
-    history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=500, batch_size=64, \
-        callbacks=[LearningRateTracker(), active_embedding_tracker])
+    if embedding_init == "random":
+        history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=500, batch_size=64, \
+            callbacks=[LearningRateTracker(), active_embedding_tracker])
+    elif embedding_init == "kmpp":
+        input_tensor = vq_vae_trainer.vqvae.layers[1].input
+        output_tensor = vq_vae_trainer.vqvae.layers[1].output
+        encoder_model = Model(inputs=input_tensor, outputs=output_tensor)
+        
+        history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=20, batch_size=64, callbacks=[LearningRateTracker(), active_embedding_tracker])
+        
+        num_epochs = 480
+        for epoch in range(num_epochs):
+            print(f"Training epochs: {epoch}/{num_epochs}:")
+            history_single_epoch = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=1, batch_size=64, callbacks=[LearningRateTracker(), active_embedding_tracker])
+            # save single epoch history to the pre-trained history
+            for key in history.history.keys():
+                history.history[key].append(history_single_epoch.history[key][0])
+            if epoch<=100 and epoch%20==0:
+                print(f"LOOK! HERE! Now embedding space is re-initialized at {epoch}-th epoch.")
+                # assign updates weights to encoder
+                encoder_model.set_weights(vq_vae_trainer.vqvae.layers[1].get_weights())
+                # use new latent variable to renitialize centriods using kmpp
+                latent_space = encoder_model.predict(x_train)
+                kmpp_centroids = kmeans_plusplus_initialization(data=latent_space, k=num_embeddings)
+                vq_vae_trainer.vqvae.layers[2].embeddings.assign(kmpp_centroids)
+        
     num_active_embeddings_list = active_embedding_tracker.num_active_embeddings_list
     
     # save training history and weights
     file_name = f"vq_vae_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_init_{embedding_init}_with_BN_{with_batch_norm}_{optimizer}.h5"
-    history_path = os.path.join("training_history", "vq_vae_kmpp_init", file_name)
+    if embedding_init == "random":
+        history_path = os.path.join("training_history", "vq_vae", file_name)
+        weights_path = os.path.join("models", "vq_vae", file_name)
+    elif embedding_init == "kmpp": 
+        history_path = os.path.join("training_history", "vq_vae_kmpp_init", file_name)
+        weights_path = os.path.join("models", "vq_vae_kmpp_init", file_name)
+    
     with h5py.File(history_path, "w") as hf:
         for key, value in history.history.items():
             hf.create_dataset(key, data=value)
         hf.create_dataset("learning_rates", data=learning_rates)
         hf.create_dataset("num_active_embeddings", data=num_active_embeddings_list)
-    weights_path = os.path.join("models", "vq_vae_kmpp_init", file_name)
+    
     vq_vae_trainer.save_model_weights(weights_path)
     print("Model weights have been saved to the path: " + weights_path)
     x_test_pred = vq_vae_trainer.predict(x_test)
@@ -397,17 +421,18 @@ def test_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, plot_figure:bo
     return mse
 
 if __name__ == "__main__":
-    # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=16, with_batch_norm=False, \
-    #     plot_figure=True, optimizer="RMSprop", embedding_init="kmpp")
+    embedding_init = "kmpp"
+    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=16, with_batch_norm=False, \
+        plot_figure=False, optimizer="RMSprop", embedding_init=embedding_init)
     train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=32, with_batch_norm=False, \
-        plot_figure=False, optimizer="RMSprop", embedding_init="kmpp")
+        plot_figure=False, optimizer="RMSprop", embedding_init=embedding_init)
     train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=64, with_batch_norm=False, \
-        plot_figure=False, optimizer="RMSprop", embedding_init="kmpp")
+        plot_figure=False, optimizer="RMSprop", embedding_init=embedding_init)
     train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=128, with_batch_norm=False, \
-        plot_figure=False, optimizer="RMSprop", embedding_init="kmpp")
+        plot_figure=False, optimizer="RMSprop", embedding_init=embedding_init)
     train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=256, with_batch_norm=False, \
-        plot_figure=False, optimizer="RMSprop", embedding_init="kmpp")
+        plot_figure=False, optimizer="RMSprop", embedding_init=embedding_init)
     train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=512, with_batch_norm=False, \
-        plot_figure=False, optimizer="RMSprop", embedding_init="kmpp")
+        plot_figure=False, optimizer="RMSprop", embedding_init=embedding_init)
     train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=1024, with_batch_norm=False, \
-        plot_figure=False, optimizer="RMSprop", embedding_init="kmpp")
+        plot_figure=False, optimizer="RMSprop", embedding_init=embedding_init)

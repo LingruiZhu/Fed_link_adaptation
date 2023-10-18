@@ -1,3 +1,4 @@
+
 import numpy as np
 import matplotlib.pyplot as plt
 import os
@@ -39,7 +40,7 @@ def create_dense_autoencoder(inputs_dims:int, latent_dims:int, optimizer:str="ad
     dense_encoder = create_dense_encoder(inputs_dims, latent_dims)
     dense_decoder = create_dense_decoder(inputs_dims, latent_dims)
     
-    inputs = Input(shape=(latent_dims,))
+    inputs = Input(shape=(inputs_dims,))
     encoded = dense_encoder(inputs)
     decoded = dense_decoder(encoded)
 

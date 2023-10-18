@@ -211,8 +211,9 @@ def create_quantized_autoencoder_EMA(input_dim, latent_dim, output_dim, num_embe
     return vector_quant_autoencoder
 
 
-class VQVAETrainer(Model):
-    def __init__(self, train_variance, input_dim, latent_dim=10, num_embeddings=1, ema_decay:float=0.99, commitment_factor=0.25, **kwargs):
+class VQVAETrainerEMA(Model):
+    def __init__(self, model_type:str, train_variance:float, input_dim:int, latent_dim:int=10, num_embeddings:int=1, ema_decay:float=0.99,\
+        commitment_factor:float=0.25, **kwargs):
         super().__init__(**kwargs)
         self.train_variance = train_variance
         self.latent_dim = latent_dim
@@ -312,7 +313,7 @@ class LearningRateCallback(keras.callbacks.Callback):
         self.num_active_embeddings_list.append((tf.keras.backend.eval(num_active_embeddings)))
 
 
-def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitment_factor:float, embedding_init:str="random",\
+def train_vq_vae_ema(model_type:str, inputs_dims:int, latent_dims:int, num_embeddings:int, commitment_factor:float, embedding_init:str="random",\
         ema_decay:float=0.99, plot_figure:bool=True):
     
     x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
@@ -323,7 +324,7 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitmen
     x_test = np.array(x_test)
     variance = np.var(x_train)
     
-    vq_vae_trainer = VQVAETrainer(variance, inputs_dims, latent_dims, num_embeddings=num_embeddings, ema_decay=ema_decay, commitment_factor=commitment_factor)
+    vq_vae_trainer = VQVAETrainerEMA(model_type, variance, inputs_dims, latent_dims, num_embeddings=num_embeddings, ema_decay=ema_decay, commitment_factor=commitment_factor)
     vq_vae_trainer.compile(optimizer="RMSprop")
     vq_vae_trainer.build((None, inputs_dims))
     
@@ -397,7 +398,7 @@ def train_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings:int, commitmen
     return mse
 
 
-def test_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, plot_figure:bool=True):
+def test_vq_vae_ema(inputs_dims:int, latent_dims:int, num_embeddings, plot_figure:bool=True):
     # load model from file
     vq_vae_ema = create_quantized_autoencoder_EMA(inputs_dims, latent_dims, inputs_dims, num_embeddings)
     vq_vae_ema.load_weights("models/vq_vae_ema_models/vq_vae_ema_input_40_latent_10_num_embeddings_128.h5")
@@ -448,4 +449,4 @@ if __name__ == "__main__":
     # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=512, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
     # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=1024, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
 
-    train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=128, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
+    train_vq_vae_ema(inputs_dims=40, latent_dims=20, num_embeddings=128, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)

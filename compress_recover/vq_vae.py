@@ -20,6 +20,7 @@ from sklearn.metrics import mean_squared_error
 
 from Interference_prediction import data_preprocessing
 from kmpp_initialization.kmpp import kmeans_plusplus_initialization
+from compress_recover.auto_encoder import create_dense_encoder, create_dense_decoder, create_lstm_encoder, create_lstm_decoder
 
 import pdb
 
@@ -97,7 +98,7 @@ class VectorQuantizer(Layer):
         # the original paper to get a handle on the formulation of the loss function.
         commitment_loss = self.beta * tf.reduce_mean((tf.stop_gradient(quantized) - x) ** 2)   # need to tune with beta
         codebook_loss = tf.reduce_mean((quantized - tf.stop_gradient(x)) ** 2)
-        # self.add_loss(self.beta * commitment_loss + codebook_loss)
+
         # separate the loss in to two parts and add them
         self.add_loss(codebook_loss)
         self.add_loss(commitment_loss)
@@ -168,31 +169,22 @@ class VectorQuantizer(Layer):
 #         return loss
 #     return vq_vae_loss
 
-
-def create_encoder(input_dim, latent_dim):
-    inputs = Input(shape=(input_dim,))
-    hidden1 = Dense(units=int(input_dim/2), activation="relu")(inputs)
-    encoder_output = Dense(units=latent_dim, activation="relu")(hidden1)
-    encoder = Model(inputs, encoder_output, name="encoder")
-    return encoder
-
-
-def create_decoder(latent_dim, output_dim):
-    decoder_inputs= Input(shape=(latent_dim,))
-    hidden1 = Dense(units=(output_dim/2), activation="relu")(decoder_inputs)
-    decoder_outputs = Dense(units=output_dim, activation="linear")(hidden1)
-    decoder = Model(decoder_inputs, decoder_outputs, name="decoder")
-    return decoder
     
+def create_quantized_autoencoder(type:str, input_dim, latent_dim, output_dim, num_embeddings:int=128, \
+    with_batch_normalization:bool=False, print_model:str=False):
+    if type == "dense":
+        encoder = create_dense_encoder(input_dim, latent_dim)
+        decoder = create_dense_decoder(latent_dim, output_dim)
+    elif type == "lstm":
+        encoder = create_lstm_encoder(input_dim, latent_dim)
+        encoder = create_lstm_decoder(input_dim, latent_dim)
     
-def create_quantized_autoencoder(input_dim, latent_dim, output_dim, num_embeddings:int=128, with_batch_normalization:bool=False):
-    encoder = create_encoder(input_dim, latent_dim)
-    decoder = create_decoder(latent_dim, output_dim)
     quantizer = VectorQuantizer(num_embeddings=num_embeddings, embedding_dim=latent_dim)
     batch_norm_layer = BatchNormalization()
     
-    encoder.summary()
-    decoder.summary()
+    if print_model:
+        encoder.summary()
+        decoder.summary()
     
     inputs = Input(shape=(input_dim,))
     encoder_outputs = encoder(inputs)

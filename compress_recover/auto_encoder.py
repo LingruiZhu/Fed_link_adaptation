@@ -26,11 +26,11 @@ def create_dense_encoder(inputs_dims:int, latent_dims:int):
     return dense_encoder_model
 
 
-def create_dense_decoder(inputs_dim:int, latent_dims:int):
+def create_dense_decoder(inputs_dims:int, latent_dims:int):
     inputs = Input(shape=(latent_dims,))
     hidden1 = Dense(units=latent_dims, activation="relu")(inputs)
     hidden2 = Dense(units=(inputs_dims/2), activation="relu")(hidden1)
-    decoded = Dense(units=inputs_dim, activation="linear")(hidden2)
+    decoded = Dense(units=inputs_dims, activation="linear")(hidden2)
     dense_decoder_model = Model(inputs, decoded, name="dense_decoder")
     return dense_decoder_model
     

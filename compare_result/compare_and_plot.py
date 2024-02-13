@@ -94,7 +94,7 @@ def ae_no_quant_test(x_test, input_dims, latent_dims, model_path):
     x_test_1d = x_test.flatten()
     abs_deviation = np.abs(x_test_1d - x_test_recover_1d)
     nmse =  np.mean((np.abs(x_test_1d - x_test_recover_1d)**2) / (np.abs(x_test_1d)**2))
-    tf.keras.backend.clear_session()     
+    tf.keras.backend.clear_session()
     return x_test_recover, x_test_recover_1d, abs_deviation, nmse
 
 
@@ -110,8 +110,8 @@ def ae_uniform_quant_test(x_test, input_dims, latent_dims, num_quant_bits, weigh
     return x_test_recover, x_test_recover_1d, abs_deviation, nmse
     
 
-def vq_vae_test(x_test, input_dims, latent_dims, num_embeddings, weights_path):
-    vq_vae = create_quantized_autoencoder(input_dims, latent_dims, input_dims, num_embeddings)
+def vq_vae_test(x_test, input_dims, latent_dims, num_embeddings, weights_path, layer_type:str="dense"):
+    vq_vae = create_quantized_autoencoder(layer_type, input_dims, latent_dims, input_dims, num_embeddings)
     vq_vae.load_weights(weights_path)
     x_test_recover = vq_vae.predict(x_test)
     x_test_recover_1d = x_test_recover.flatten()
@@ -122,8 +122,8 @@ def vq_vae_test(x_test, input_dims, latent_dims, num_embeddings, weights_path):
     return x_test_recover, x_test_recover_1d, abs_deviation, nmse
 
 
-def vq_vae_ema_test(x_test, input_dims, latent_dims, num_embeddings, weights_path):
-    vq_vae_ema = create_quantized_autoencoder_EMA(input_dims, latent_dims, input_dims, num_embeddings)
+def vq_vae_ema_test(x_test, input_dims, latent_dims, num_embeddings, weights_path, layer_type:str="dense"):
+    vq_vae_ema = create_quantized_autoencoder_EMA(layer_type, input_dims, latent_dims, input_dims, num_embeddings)
     vq_vae_ema.load_weights(weights_path)
     
     vq_ema_layer = vq_vae_ema.layers[2]

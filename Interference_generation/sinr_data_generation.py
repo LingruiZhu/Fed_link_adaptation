@@ -3,14 +3,16 @@ import matplotlib.pyplot as plt
 import math
 from tqdm import tqdm
 import h5py
+import os
+
 
 from MovingSensor import MovingSensor
 from ChannelModel import ChannelModel, createMap
-from Devices import RandomMovingUserEquipment, StaticUserEquipment, BaseStation
+from Devices import RandomMovingUserEquipment, StaticUserEquipment, BaseStation, RouteMovingUserEquipment
 from MovingArea import MovingArea
 
 
-def generate_sinr_data():
+def generate_sinr_data(interference_type:str="random"):
     # initialze the moving area
     x_boundary = np.array([0, 20])
     y_boundary = np.array([0, 20])
@@ -20,6 +22,10 @@ def generate_sinr_data():
     interference_sensor_1 = RandomMovingUserEquipment(tx_power=20, init_x=5, init_y=5, speed=2, direction=0, x_boundary=x_boundary, y_boundary=y_boundary)
     interference_sensor_2 = RandomMovingUserEquipment(tx_power=20, init_x=10, init_y=10, speed=2, direction=0, x_boundary=x_boundary, y_boundary=y_boundary)
     interference_sensor_3 = RandomMovingUserEquipment(tx_power=20, init_x=10, init_y=10, speed=2, direction=0, x_boundary=x_boundary, y_boundary=y_boundary)
+    
+    # intialize the route-movubg sensors
+    interference_sensor_4 = RouteMovingUserEquipment(tx_power=20, init_x=0, init_y=0, speed_mps=2, route_type="square", sampling_interval=1e-3)
+    interference_sensor_5 = RouteMovingUserEquipment(tx_power=20, init_x=0, init_y=10, speed_mps=2, route_type="circle", sampling_interval=1e-3)
     
     # define the UE position (dont move)
     UE_1 = StaticUserEquipment(tx_power=0, pos_x=25, pos_y=10)
@@ -41,11 +47,15 @@ def generate_sinr_data():
         delta=map_delta, step_size=map_step_size, map_width=map_width, map_length=map_length)
     channel_3 = ChannelModel(path_loss_factor=2.5, number_paths=10, ue_speed=2, carrier_freq=3e9, shadowing_map=shadowing_map,\
         delta=map_delta, step_size=map_step_size, map_width=map_width, map_length=map_length)
+    channel_4 = ChannelModel(path_loss_factor=2.5, number_paths=10, ue_speed=2, carrier_freq=3e9, shadowing_map=shadowing_map,\
+        delta=map_delta, step_size=map_step_size, map_width=map_width, map_length=map_length)
+    channel_5 = ChannelModel(path_loss_factor=2.5, number_paths=10, ue_speed=2, carrier_freq=3e9, shadowing_map=shadowing_map,\
+        delta=map_delta, step_size=map_step_size, map_width=map_width, map_length=map_length)
     channel_BS = ChannelModel(path_loss_factor=2.5, number_paths=10, ue_speed=2, carrier_freq=3e9, shadowing_map=shadowing_map,\
         delta=map_delta, step_size=map_step_size, map_width=map_width, map_length=map_length)
     
     # write the loop for updating postion of sensors and calculate SINR
-    num_samples = 10000
+    num_samples = 100000
     sample_frequency = 1000
     sample_interval = 1 / sample_frequency
     durarion = num_samples * sample_interval
@@ -59,16 +69,27 @@ def generate_sinr_data():
     sinr_dB_list = list()
     interference_list = list()
     for time_index in tqdm(time_indicies):
-        inter1_position = interference_sensor_1.random_move(sampling_interval=sample_interval)
-        inter2_position = interference_sensor_2.random_move(sampling_interval=sample_interval)
-        inter3_position = interference_sensor_3.random_move(sampling_interval=sample_interval)
+        if interference_type == "random":
+            inter1_position = interference_sensor_1.random_move(sampling_interval=sample_interval)
+            inter2_position = interference_sensor_2.random_move(sampling_interval=sample_interval)
+            inter3_position = interference_sensor_3.random_move(sampling_interval=sample_interval)
+            
+            # calculate interfernce
+            interference_channel_1 = channel_1.calculate_channel(UE_position, inter1_position, time_index)
+            interference_channel_2 = channel_2.calculate_channel(UE_position, inter2_position, time_index)
+            interference_channel_3 = channel_3.calculate_channel(UE_position, inter3_position, time_index)
+            interference_power = interference_channel_1 * interference_sensor_1.tx_power + \
+                interference_channel_2 * interference_sensor_2.tx_power + interference_channel_3 * interference_sensor_3.tx_power
         
-        # calculate interfernce
-        interference_channel_1 = channel_1.calculate_channel(UE_position, inter1_position, time_index)
-        interference_channel_2 = channel_2.calculate_channel(UE_position, inter2_position, time_index)
-        interference_channel_3 = channel_3.calculate_channel(UE_position, inter3_position, time_index)
-        interference_power = interference_channel_1 * interference_sensor_1.tx_power + \
-            interference_channel_2 * interference_sensor_2.tx_power + interference_channel_3 * interference_sensor_3.tx_power
+        elif interference_type == "route":
+            inter4_position = interference_sensor_4.move()
+            inter5_position = interference_sensor_5.move()
+            
+            # calculate interference
+            interference_channel_4 = channel_4.calculate_channel(UE_position, inter4_position, time_index)
+            interference_channel_5 = channel_5.calculate_channel(UE_position, inter5_position, time_index)
+            interference_power = interference_channel_4*interference_sensor_4.tx_power + \
+                interference_channel_5*interference_sensor_5.tx_power
         
         noise_power = 0.01
         
@@ -92,7 +113,10 @@ def generate_sinr_data():
     plt.grid()
     plt.show()    
     
-    file_single_ue = h5py.File("Interference_generation/single_UE_data.h5", "w")
+    file_name = f"single_UE_data_{interference_type}.h5"
+    file_path = os.path.join("Interference_generation", file_name)
+    
+    file_single_ue = h5py.File(file_path, "w")
     file_single_ue.create_dataset(name="SINR", data=np.array(sinr_list))
     file_single_ue.create_dataset(name="SINR_dB", data=np.array(sinr_dB_list))
     file_single_ue.create_dataset(name="Interference_power", data=np.array(interference_list))
@@ -100,5 +124,5 @@ def generate_sinr_data():
 
 
 if __name__ == "__main__":
-    generate_sinr_data()
+    generate_sinr_data(interference_type="random")
     

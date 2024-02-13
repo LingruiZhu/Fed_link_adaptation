@@ -5,7 +5,11 @@ sys.path.append("/home/zhu/Codes/Fed_Link_Adaptation")
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-# tf.compat.v1.enable_eager_execution()
+
+tf.config.run_functions_eagerly(True)
+
+import logging
+tf.get_logger().setLevel(logging.ERROR)
 
 from tensorflow.keras import backend as K
 
@@ -15,14 +19,21 @@ import h5py
 from tensorflow import keras
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Layer, Dense, BatchNormalization
+from tensorflow.keras.callbacks import Callback
+from tensorflow.keras.optimizers import RMSprop, Adam
 
 
 from sklearn.metrics import mean_squared_error
 
 from Interference_prediction import data_preprocessing
-from kmpp_initialization.kmpp import kmeans_plusplus_initialization
+from Re_initialization.kmpp import kmeans_plusplus_initialization
+from Re_initialization.pca_splitting_initialization import pca_split_initialization
 from compress_recover.auto_encoder import create_dense_encoder, create_dense_decoder, \
     create_lstm_encoder, create_lstm_decoder
+from compress_recover.entropy_callbacks import LatentEntropyCallback
+    
+    
+import pdb
 
 
 class VectorQuantizer_EMA(Layer):
@@ -51,8 +62,11 @@ class VectorQuantizer_EMA(Layer):
             initial_value=tf.zeros(shape=(self.num_embeddings,), dtype="float32"),
             trainable=False,
             name="count_vqvae")
+        
+        # initialize the embedding sum using self.embeddings
+        init_value = self.embeddings.numpy()
         self.embeddings_sum = tf.Variable(
-            initial_value=tf.zeros(shape=(self.embedding_dim, self.num_embeddings), dtype="float32"),
+            initial_value=init_value,
             trainable=False,
             name="embeddings_sum_vqvae")
         self.embedding_sample_accumulative_count = tf.Variable(
@@ -67,6 +81,14 @@ class VectorQuantizer_EMA(Layer):
     
     def disable_training_ema(self):
         self.is_training_ema = False
+        
+    
+    def calculate_data_points_number_per_centorid(self, x):
+        flattened = tf.reshape(x, [-1, self.embedding_dim])
+        encoding_indices = self.get_code_indices(flattened)
+        encodings = tf.one_hot(encoding_indices, self.num_embeddings)
+        data_points_number_per_centorid = tf.reduce_sum(encodings, axis=0)
+        return data_points_number_per_centorid
         
 
     def call(self, x):
@@ -100,30 +122,60 @@ class VectorQuantizer_EMA(Layer):
 
 
     def update_ema_embeddings(self, inputs):
-        print("now update ema")
-        flattened_inputs = tf.reshape(inputs, [-1, self.embedding_dim])
-
+        flattened_inputs = tf.reshape(inputs, [-1, self.embedding_dim])\
+        
         # Calculate the encoding indices based on the flattened inputs
         encoding_indices = self.get_code_indices(flattened_inputs)
         encodings = tf.one_hot(encoding_indices, self.num_embeddings)
         
         # Calculate the count of each codebook vector based on the encoding indices
-        count = tf.reduce_sum(encodings, 0)
+        # count here should be a 1-d vector of length num_embeedings, i-th element indicates the number of usages for i-th codework in embedding space.
+        count = tf.reduce_sum(encodings, 0)   
+        non_zero_mask = tf.not_equal(count, 0)
 
         # Update the EMA count using the decay factor
-        self.ema_count.assign(self.ema_decay * self.ema_count + (1-self.ema_decay) * count)
-
+        updated_ema_count = tf.where(
+            condition=non_zero_mask,
+            x=self.ema_decay * self.ema_count + (1-self.ema_decay) * count,
+            y=self.ema_count
+        )
+        
+        # Equations from derivation
+        # current_embeddings_sum = tf.matmul(flattened_inputs, encodings, transpose_a=True)
+        # divided_embeddings_sum = tf.divide(current_embeddings_sum, updated_ema_count)
+        # embeddings_gradients = tf.where(
+        #     condition = non_zero_mask,
+        #     x = (1-self.ema_decay)*divided_embeddings_sum,
+        #     y = 0 
+        # )
+        # updated_embeddings = tf.where(
+        #     condition = non_zero_mask,
+        #     x = self.ema_decay * self.embeddings + embeddings_gradients,
+        #     y = self.embeddings 
+        # )
+        
+        # Equations from original paper    
         # Calculate the EMA of the codebook embeddings
-        embeddings_sum = tf.matmul(flattened_inputs, encodings, transpose_a=True)
-        updated_embeddings_sum = self.ema_decay * self.embeddings_sum + (1-self.ema_decay) * embeddings_sum
+        current_embeddings_sum = tf.matmul(flattened_inputs, encodings, transpose_a=True)
+        updated_embeddings_sum = tf.where(
+            condition=non_zero_mask,
+            x=self.ema_decay * self.embeddings_sum + (1-self.ema_decay) * current_embeddings_sum,
+            y=self.embeddings_sum
+        )
 
         # Normalize the updated codebook embeddings using the count
-        normalized_embeddings = updated_embeddings_sum / tf.maximum(self.ema_count, 1e-5)
+        updated_embeddings = tf.where(
+            condition=non_zero_mask,
+            x=updated_embeddings_sum / updated_ema_count,
+            y=updated_embeddings_sum
+        )
 
         # Assign the normalized embeddings to the codebook
-        self.embeddings.assign(normalized_embeddings)
-        self.embeddings_sum.assign(updated_embeddings_sum)
-        self.count.assign(count)
+        self.ema_count.assign(updated_ema_count)
+        self.embeddings.assign(updated_embeddings)
+
+        # self.embeddings.assign(normalized_embeddings)
+        # self.embeddings_sum.assign(updated_embeddings_sum)
         self.embedding_sample_accumulative_count.assign(self.embedding_sample_accumulative_count + count)
         
 
@@ -135,7 +187,6 @@ class VectorQuantizer_EMA(Layer):
             + tf.reduce_sum(self.embeddings**2, axis=0)
             - 2 * similarity
         )
-
         # Derive the indices for minimum distances.
         encoding_indices = tf.argmin(distances, axis=1)
         return encoding_indices
@@ -168,7 +219,7 @@ def create_quantized_autoencoder_EMA(model_type, input_dim, latent_dim, output_d
     encoder.summary()
     decoder.summary()
     
-    inputs = Input(shape=(input_dim,))
+    inputs = Input(shape=(input_dim,), name="vq_vae_input")
     encoder_outputs = encoder(inputs)
     
     encoder_outputs_quantized = quantizer(encoder_outputs)
@@ -179,8 +230,13 @@ def create_quantized_autoencoder_EMA(model_type, input_dim, latent_dim, output_d
     return vector_quant_autoencoder
 
 
+class EmbeedingUpdateCallback(Callback):  
+    def __init__(self, model, da):
+        super().__init__()
+
+
 class VQVAETrainerEMA(Model):
-    def __init__(self, model_type:str, train_variance:float, input_dim:int, latent_dim:int=10, \
+    def __init__(self, model_type:str, train_variance:float, input_dim:int, latent_dim:int=10,\
         num_embeddings:int=1, ema_decay:float=0.99,\
         commitment_factor:float=0.25, **kwargs):
         super().__init__(**kwargs)
@@ -202,6 +258,7 @@ class VQVAETrainerEMA(Model):
         )
         self.vq_loss_tracker = keras.metrics.Mean(name="codebook_loss")
 
+        self.update_ema_embeddings = True 
 
     @property
     def metrics(self):
@@ -212,6 +269,14 @@ class VQVAETrainerEMA(Model):
         ]
     
     
+    def disable_ema_embeddings_update(self):
+        self.update_ema_embeddings = False
+        
+    
+    def enable_ema_embeddings_update(self):
+        self.update_ema_embeddings = False
+    
+    
     def get_latent_vector(self, x):
         x1 = self.vqvae.layers[0](x)
         latent_vec = self.vqvae.layers[1](x1)
@@ -219,6 +284,7 @@ class VQVAETrainerEMA(Model):
         
 
     def train_step(self, x):
+        # print("Look! now we are training")
         with tf.GradientTape(persistent=True) as tape:
             # Outputs from the VQ-VAE.
             reconstructions = self.vqvae(x)
@@ -236,12 +302,12 @@ class VQVAETrainerEMA(Model):
         # Backpropogation w.r.t. reconstruction loss
         reconstruction_loss_grads = tape.gradient(reconstruction_loss, self.vqvae.trainable_variables)
         self.optimizer.apply_gradients(zip(reconstruction_loss_grads, self.vqvae.trainable_variables))
-        
-        # Update embeding vectors
-        latent_var = self.get_latent_vector(x)
-        self.vqvae.layers[2].update_ema_embeddings(latent_var)
+            
+        # Update embedding vectors
+        if self.update_ema_embeddings:
+            latent_var = self.get_latent_vector(x)
+            self.vqvae.layers[2].update_ema_embeddings(latent_var)
 
-        
         # Backpropoagation w.r.t. commitment loss
         commitment_loss_grad = tape.gradient(self.vqvae.losses, self.vqvae.layers[1].trainable_variables) # need change the varible
         self.optimizer.apply_gradients(zip(commitment_loss_grad, self.vqvae.layers[1].trainable_variables))
@@ -267,14 +333,15 @@ class VQVAETrainerEMA(Model):
         self.vqvae.save_weights(file_path)
 
 
-class LearningRateCallback(keras.callbacks.Callback):
+class LearningRateCallback(Callback):
     def __init__(self, vqvae):
         super().__init__()
         self.vqvae = vqvae
         self.learning_rates_list = []
         self.num_active_embeddings_list = []
 
-    def on_epoch_end(self, batch, logs=None):
+
+    def on_epoch_end(self, epoch, logs=None):
         # Calculate the learning rate
         learning_rate = (1 - self.vqvae.layers[2].ema_decay) * (self.vqvae.layers[2].count / (2 * self.vqvae.layers[2].ema_count + 1e-5))
 
@@ -282,6 +349,7 @@ class LearningRateCallback(keras.callbacks.Callback):
         self.learning_rates_list.append(tf.keras.backend.eval(learning_rate))
         num_active_embeddings = tf.math.count_nonzero(self.vqvae.layers[2].embedding_sample_accumulative_count)
         self.num_active_embeddings_list.append((tf.keras.backend.eval(num_active_embeddings)))
+        print(f"Epoch {epoch + 1}: Number of Active Embeddings = {num_active_embeddings}")
 
 
 def train_vq_vae_ema(model_type:str, inputs_dims:int, latent_dims:int, num_embeddings:int, embedding_init:str="random", num_epochs:int=300, \
@@ -298,15 +366,19 @@ def train_vq_vae_ema(model_type:str, inputs_dims:int, latent_dims:int, num_embed
     
     vq_vae_trainer = VQVAETrainerEMA(model_type, variance, inputs_dims, latent_dims, \
         num_embeddings=num_embeddings, ema_decay=ema_decay, commitment_factor=commitment_factor)
-    vq_vae_trainer.compile(optimizer=optimizer)
+    if optimizer.lower() == "rmsprop":
+        vq_vae_trainer.compile(optimizer=RMSprop(learning_rate=2e-3))
+    if optimizer.lower() == "adam":
+        vq_vae_trainer.compile(optimizer=Adam(learning_rate=2e-3))
     vq_vae_trainer.build((None, inputs_dims))
     
     learning_rate_callback = LearningRateCallback(vq_vae_trainer.vqvae)
+    latent_entropy_callback = LatentEntropyCallback(vq_vae_trainer.vqvae, validation_data=x_test, input_dim=40)
     
     if embedding_init == "random":
-        history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=num_epochs, batch_size=64, \
-            callbacks=[learning_rate_callback])
-    elif embedding_init == "kmpp":
+        history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=num_epochs, batch_size=128, \
+            callbacks=[learning_rate_callback, latent_entropy_callback], verbose=2)
+    elif embedding_init == "kmpp" or "pca":
          # here define the encoder and assign new weights during the training process    
         input_tensor = vq_vae_trainer.vqvae.layers[1].input
         output_tensor = vq_vae_trainer.vqvae.layers[1].output
@@ -314,8 +386,8 @@ def train_vq_vae_ema(model_type:str, inputs_dims:int, latent_dims:int, num_embed
                 
         for epoch in range(num_epochs):
             print(f"Training epochs: {epoch}/{num_epochs}:")
-            history_single_epoch = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=1, batch_size=64, \
-                callbacks=[learning_rate_callback], verbose=1)
+            history_single_epoch = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=1, batch_size=128, \
+                callbacks=[learning_rate_callback, latent_entropy_callback], verbose=2)
             if epoch == 0:                  # initialize history object
                 history = history_single_epoch
             else:
@@ -327,11 +399,16 @@ def train_vq_vae_ema(model_type:str, inputs_dims:int, latent_dims:int, num_embed
                 encoder_model.set_weights(vq_vae_trainer.vqvae.layers[1].get_weights())
                 # use new latent variable to renitialize centriods using kmpp
                 latent_space = encoder_model.predict(x_train)
-                kmpp_centroids = kmeans_plusplus_initialization(data=latent_space, k=num_embeddings)
-                vq_vae_trainer.vqvae.layers[2].embeddings.assign(kmpp_centroids)
-    
+                if embedding_init == "kmpp":
+                    kmpp_centroids = kmeans_plusplus_initialization(data=latent_space, k=num_embeddings)
+                    vq_vae_trainer.vqvae.layers[2].embeddings.assign(kmpp_centroids)
+                elif embedding_init == "pca":
+                    pca_centorids = pca_split_initialization(data=latent_space, k=num_embeddings)
+                    vq_vae_trainer.vqvae.layers[2].embeddings.assign(pca_centorids)
+                
     learning_rate_list = learning_rate_callback.learning_rates_list
     num_active_embeddings_list = learning_rate_callback.num_active_embeddings_list
+    latent_entropy_list = latent_entropy_callback.entropy_values_list
         
     file_name = f"{model_type}_vq_vae_ema_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_init_{embedding_init}_{optimizer}_ema_decay_{ema_decay}_beta_{commitment_factor}"
     if simulation_index != None:
@@ -339,11 +416,14 @@ def train_vq_vae_ema(model_type:str, inputs_dims:int, latent_dims:int, num_embed
     file_name = file_name + ".h5"
     
     if embedding_init == "random":  
-        weights_path = os.path.join("models_new", "VQ_VAE_EMA_models", f"latent_dim_{latent_dims}", file_name)
-        history_path = os.path.join("training_history_new", "VQ_VAE_EMA_history", f"latent_dim_{latent_dims}", file_name)
+        weights_path = os.path.join("models_new", "VQ_VAE_EMA_models", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+        history_path = os.path.join("training_history_new", "VQ_VAE_EMA_history", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
     elif embedding_init == "kmpp":        
-        weights_path = os.path.join("models_new", "VQ_VAE_EMA_KMPP_models", f"latent_dim_{latent_dims}", file_name)
-        history_path = os.path.join("training_history_new", "VQ_VAE_EMA_KMPP_history", f"latent_dim_{latent_dims}", file_name)
+        weights_path = os.path.join("models_new", "VQ_VAE_EMA_KMPP_models", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+        history_path = os.path.join("training_history_new", "VQ_VAE_EMA_KMPP_history", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+    elif embedding_init == "pca":
+        weights_path = os.path.join("models_new", "VQ_VAE_EMA_PCA_models", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+        history_path = os.path.join("training_history_new", "VQ_VAE_EMA_PCA_history", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
     
     # save weights and training history
     vq_vae_trainer.save_model_weights(weights_path)
@@ -352,6 +432,7 @@ def train_vq_vae_ema(model_type:str, inputs_dims:int, latent_dims:int, num_embed
             hf.create_dataset(key, data=value)
         hf.create_dataset("learning_rates", data=learning_rate_list)
         hf.create_dataset("num_active_embeddings", data=num_active_embeddings_list)
+        hf.create_dataset("latent_entropy", data=latent_entropy_list)
     
     # disable ema updates
     vq_ema_layer = vq_vae_trainer.vqvae.layers[2]
@@ -413,7 +494,7 @@ def tensors_to_numpy_list(tensor_list):
 if __name__ == "__main__":    
     ema_decay = 0.99
     beta = 0.25
-    embeeding_init = "random"
+    embeeding_init = "kmpp"
     optimizer = "RMSprop"
     
     # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=16, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
@@ -424,5 +505,6 @@ if __name__ == "__main__":
     # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=512, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
     # train_vq_vae(inputs_dims=40, latent_dims=20, num_embeddings=1024, commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init)
 
-    train_vq_vae_ema(model_type="lstm", inputs_dims=40, latent_dims=20, num_embeddings=128, num_epochs=20, \
-        commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init, simulation_indedx=0)
+    train_vq_vae_ema(model_type="dense", inputs_dims=40, latent_dims=20, num_embeddings=32, num_epochs=200, \
+        commitment_factor=beta, plot_figure=False, ema_decay=ema_decay, embedding_init=embeeding_init, simulation_index=0)
+    

@@ -63,12 +63,22 @@ def preprocess_encoder_decoder_test(data_sample:np.array, starting_buffer:np.arr
     return np.array(new_samples)
 
     
-def prepare_data(num_inputs, num_outputs):
-    data_file_path = "Interference_generation/interference_data/single_UE_data.h5"
+def prepare_data(num_inputs, num_outputs, data_type:str="default"):
+    if data_type == "default":
+        data_file_path = "Interference_generation/interference_data/single_UE_data.h5"
+    elif data_type == "route":
+        data_file_path = "Interference_generation/interference_data/single_UE_data_route.h5"
+    elif data_type == "random":
+        data_file_path = "Interference_generation/interference_data/single_UE_data_random.h5"
+    
+    
     sinr_sequence, sinr_dB_sequence, interference_sequence = read_file(data_file_path)
     
     # Use sinr sequence to train model
-    train_sinr_sequence, test_sinr_sequence = sinr_dB_sequence[:8000], sinr_dB_sequence[8000:]
+    sequence_length = np.shape(sinr_dB_sequence)[0]
+    num_train = int(0.8*sequence_length)
+    
+    train_sinr_sequence, test_sinr_sequence = sinr_dB_sequence[:num_train], sinr_dB_sequence[num_train:]
     train_samples = preprocess_train(train_sinr_sequence, num_inputs=num_inputs, num_outputs=num_outputs, shuffle_samples=True)
     x_train, y_train = train_samples[:, :num_inputs], train_samples[:, num_inputs:]
     x_train = np.expand_dims(x_train, axis=-1)

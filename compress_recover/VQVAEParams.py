@@ -1,4 +1,5 @@
-
+import sys 
+sys.path.append("/home/zhu/Codes/Fed_Link_Adaptation")
 
 class VQVAEParams:
     def __init__(self, autoencoder_type:str, vq_update_type:str, init_embedding_method:str, \

@@ -10,6 +10,7 @@ sys.path.append("/home/zhu/Codes/Fed_Link_Adaptation")
 import tensorflow as tf
 from tensorflow.keras.layers import Input, Dense, LSTM, Reshape, Lambda
 from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam, RMSprop
 
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
@@ -53,18 +54,16 @@ def create_dense_autoencoder(inputs_dims:int, latent_dims:int, optimizer:str="ad
 
 def create_lstm_encoder(inputs_dims:int, latent_dims:int, num_features:int=1):
     inputs = Input(shape=(inputs_dims, num_features))
-    hidden1 = LSTM(inputs_dims, activation="relu", return_sequences=True)(inputs)
-    hidden2 = LSTM(int(inputs_dims/2), activation="relu", return_sequences=True)(hidden1)
-    encoded = LSTM(latent_dims, activation="relu", return_sequences=False)(hidden2)
+    hidden1 = LSTM(int(inputs_dims/2), activation="relu", return_sequences=True)(inputs)
+    encoded = LSTM(latent_dims, activation="relu", return_sequences=False)(hidden1)
     lstm_encoder_model = Model(inputs, encoded, name="lstm_encoder")
     return lstm_encoder_model
 
 
 def create_lstm_decoder(inputs_dims:int, latent_dims:int, num_features:int=1):
     inputs = Input(shape=(latent_dims, num_features))
-    hidden1 = LSTM(latent_dims, activation="relu", return_sequences=True)(inputs)
-    hidden2 = LSTM(int(inputs_dims/2), activation="relu", return_sequences=False)(hidden1)
-    decoded = Dense(inputs_dims, activation="linear")(hidden2)
+    hidden1 = LSTM(int(inputs_dims/2), activation="relu", return_sequences=False)(inputs)
+    decoded = Dense(inputs_dims, activation="linear")(hidden1)
     lstm_decoder_model = Model(inputs, decoded, name="lstm_decoder")
     return lstm_decoder_model
 
@@ -81,17 +80,21 @@ def create_lstm_autoencoder(inputs_dims:int, latent_dims, optimizer:str="adam", 
 
     # Create the autoencoder model
     autoencoder = Model(inputs, decoded)
-    autoencoder.compile(optimizer=optimizer, loss="mse")
+    if optimizer.lower() == "adam":
+        autoencoder.compile(optimizer=Adam(learning_rate=1e-4), loss="mse")
+    elif optimizer.lower() == "rmsprop":
+        autoencoder.compile(optimizer=RMSprop(learning_rate=1e-4), loss="mse")
+
     autoencoder.summary()
     return autoencoder
     
 
-def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int, optimizer:str="adam", type:str="dense", plot_figure:bool=True):
+def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int, optimizer:str="adam", type:str="dense", data_type:str="random", plot_figure:bool=True):
     if type == "dense":
         autoencoder = create_dense_autoencoder(inputs_dims, latent_dims, optimizer)
     elif type == "lstm":
         autoencoder = create_lstm_autoencoder(inputs_dims, latent_dims, optimizer)
-    x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10)
+    x_train, _, x_test, _, _ = data_preprocessing.prepare_data(num_inputs=40, num_outputs=10, data_type=data_type)
     
     if type == "dense":
         x_train = np.squeeze(x_train)
@@ -99,15 +102,15 @@ def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int, optimi
     x_test = np.squeeze(x_test)
         
     history = autoencoder.fit(x_train, x_train, epochs=300, batch_size=64)
-    file_name = f"AE_{type}_input_{inputs_dims}_latent_{latent_dims}_optimizer_{optimizer}.h5"
-    history_save_path = os.path.join("training_history", "ae", file_name)
+    file_name = f"AE_{type}_input_{inputs_dims}_latent_{latent_dims}_optimizer_{optimizer}_data_{data_type}.h5"
+    history_save_path = os.path.join("experiment_01_route_random_compare", "training_history", "ae", file_name)
     with h5py.File(history_save_path, "w") as hf:
         for key, value in history.history.items():
             hf.create_dataset(key, data=value)
     
     recover_test = autoencoder.predict(x_test)
     mse_rescale = mean_squared_error(recover_test, x_test)
-    model_save_path = os.path.join("models", "ae_models", file_name)
+    model_save_path = os.path.join("experiment_01_route_random_compare", "models", "ae_models", file_name)
     autoencoder.save(model_save_path)
     print(f"the MSE after rescale is {mse_rescale}")
     
@@ -128,5 +131,9 @@ def train_autoencoder_input_compression(inputs_dims:int, latent_dims:int, optimi
 if __name__ == "__main__":
     inputs_dims = 40
     latent_dims = 20
-    train_autoencoder_input_compression(inputs_dims=40, latent_dims=20, type="dense", optimizer="RMSprop")
-    train_autoencoder_input_compression(inputs_dims=40, latent_dims=20, type="lstm", optimizer="RMSprop")
+    # train_autoencoder_input_compression(inputs_dims=40, latent_dims=20, type="dense", optimizer="RMSprop", data_type="random")
+    # train_autoencoder_input_compression(inputs_dims=40, latent_dims=20, type="dense", optimizer="RMSprop", data_type="route")
+    # train_autoencoder_input_compression(inputs_dims=40, latent_dims=20, type="lstm", optimizer="RMSprop", data_type="default")
+    train_autoencoder_input_compression(inputs_dims=40, latent_dims=20, type="lstm", optimizer="RMSprop", data_type="route")
+    train_autoencoder_input_compression(inputs_dims=40, latent_dims=20, type="lstm", optimizer="RMSprop", data_type="random")
+    

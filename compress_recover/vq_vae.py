@@ -4,6 +4,7 @@ import tensorflow as tf
 import os
 import h5py
 
+tf.config.run_functions_eagerly(True)
 
 import sys 
 sys.path.append("/home/zhu/Codes/Fed_Link_Adaptation")
@@ -19,8 +20,10 @@ from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.metrics import mean_squared_error
 
 from Interference_prediction import data_preprocessing
-from kmpp_initialization.kmpp import kmeans_plusplus_initialization
+from Re_initialization.kmpp import kmeans_plusplus_initialization
+from Re_initialization.pca_splitting_initialization import pca_split_initialization
 from compress_recover.auto_encoder import create_dense_encoder, create_dense_decoder, create_lstm_encoder, create_lstm_decoder
+from compress_recover.entropy_callbacks import LatentEntropyCallback
 
 
 class VectorQuantizer(Layer):
@@ -74,6 +77,14 @@ class VectorQuantizer(Layer):
             trainable=False,
             name="embedding_sample_accumualtive_count"
         )
+    
+    
+    def calculate_data_points_number_per_centorid(self, x):
+        flattened = tf.reshape(x, [-1, self.embedding_dim])
+        encoding_indices = self.get_code_indices(flattened)
+        encodings = tf.one_hot(encoding_indices, self.num_embeddings)
+        data_points_number_per_centorid = tf.reduce_sum(encodings, axis=0)
+        return data_points_number_per_centorid
 
 
     def call(self, x):
@@ -269,7 +280,6 @@ class CountActivdeEmbeddings(keras.callbacks.Callback):
         num_active_embeddings = tf.math.count_nonzero(self.vqvae.layers[2].embedding_sample_accumulative_count)
         self.num_active_embeddings_list.append(tf.keras.backend.eval(num_active_embeddings))
         
-        
     
 def train_vq_vae(model_type:str, inputs_dims:int, latent_dims:int, num_embeddings:int, embedding_init:str="random",\
     num_epochs:int=300, plot_figure:bool=True, optimizer:str="adam", init_epochs:int=100, re_init_interval:int=20, simulation_index:int=None):
@@ -299,13 +309,14 @@ def train_vq_vae(model_type:str, inputs_dims:int, latent_dims:int, num_embedding
     
     # Define callback to track the embedding space
     active_embedding_tracker = CountActivdeEmbeddings(vq_vae_trainer.vqvae)
+    latent_entropy_callback = LatentEntropyCallback(model=vq_vae_trainer, validation_data=x_test, input_dim=40)
     
     early_stopping = EarlyStopping(monitor="val_total_loss", patience=20, mode="min")
     if embedding_init == "random":
         history = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=num_epochs, batch_size=64, \
-            callbacks=[LearningRateTracker(), active_embedding_tracker])
+            callbacks=[LearningRateTracker(), active_embedding_tracker, latent_entropy_callback])
         
-    elif embedding_init == "kmpp":
+    elif embedding_init == "kmpp" or "pca":
         input_tensor = vq_vae_trainer.vqvae.layers[1].input
         output_tensor = vq_vae_trainer.vqvae.layers[1].output
         encoder_model = Model(inputs=input_tensor, outputs=output_tensor)
@@ -313,7 +324,7 @@ def train_vq_vae(model_type:str, inputs_dims:int, latent_dims:int, num_embedding
         for epoch in range(num_epochs):
             print(f"Training epochs: {epoch}/{num_epochs}:")
             history_single_epoch = vq_vae_trainer.fit(x=x_train, validation_split=0.2, epochs=1, batch_size=64, \
-                callbacks=[LearningRateTracker(), active_embedding_tracker])
+                callbacks=[LearningRateTracker(), active_embedding_tracker, latent_entropy_callback])
             if epoch == 0:              # initialize history object
                 history = history_single_epoch
             # save single epoch history to the pre-trained history
@@ -325,10 +336,15 @@ def train_vq_vae(model_type:str, inputs_dims:int, latent_dims:int, num_embedding
                 encoder_model.set_weights(vq_vae_trainer.vqvae.layers[1].get_weights())
                 # use new latent variable to renitialize centriods using kmpp
                 latent_space = encoder_model.predict(x_train)
-                kmpp_centroids = kmeans_plusplus_initialization(data=latent_space, k=num_embeddings)
-                vq_vae_trainer.vqvae.layers[2].embeddings.assign(kmpp_centroids)
-        
+                if embedding_init == "kmpp":
+                    kmpp_centroids = kmeans_plusplus_initialization(data=latent_space, k=num_embeddings)
+                    vq_vae_trainer.vqvae.layers[2].embeddings.assign(kmpp_centroids)
+                elif embedding_init == "pca":
+                    pca_centroids = pca_split_initialization(data=latent_space, k=num_embeddings)
+                    vq_vae_trainer.vqvae.layers[2].embeddings.assign(pca_centroids)
     num_active_embeddings_list = active_embedding_tracker.num_active_embeddings_list
+    latent_entropy_list = latent_entropy_callback.entropy_values_list
+    
     
     # save training history and weights
     file_name = f"{model_type}_vq_vae_input_{inputs_dims}_latent_{latent_dims}_num_embeddings_{num_embeddings}_init_{embedding_init}_{optimizer}"
@@ -337,18 +353,22 @@ def train_vq_vae(model_type:str, inputs_dims:int, latent_dims:int, num_embedding
     file_name = file_name + '.h5'
     
     if embedding_init == "random":
-        weights_path = os.path.join("models_new", "VQ_VAE_models", f"latent_dim_{latent_dims}", file_name)
-        history_path = os.path.join("training_history_new", "VQ_VAE_history", f"latent_dim_{latent_dims}", file_name)
-    elif embedding_init == "kmpp": 
-        weights_path = os.path.join("models_new", "VQ_VAE_KMPP_models", f"latent_dim_{latent_dims}", file_name)
-        history_path = os.path.join("training_history_new", "VQ_VAE_KMPP_history", f"latent_dim_{latent_dims}", file_name)
-    
+        weights_path = os.path.join("models_new", "VQ_VAE_models", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+        history_path = os.path.join("training_history_new", "VQ_VAE_history", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+    elif embedding_init == "kmpp":
+        weights_path = os.path.join("models_new", "VQ_VAE_KMPP_models", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+        history_path = os.path.join("training_history_new", "VQ_VAE_KMPP_history", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+    elif embedding_init == "pca":
+        weights_path = os.path.join("models_new", "VQ_VAE_PCA_models", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+        history_path = os.path.join("training_history_new", "VQ_VAE_PCA_history", f"latent_dim_{latent_dims}", f"num_embeddings_{num_embeddings}", file_name)
+        
     with h5py.File(history_path, "w") as hf:
         for key, value in history.history.items():
             hf.create_dataset(key, data=value)
         hf.create_dataset("learning_rates", data=learning_rates)
         hf.create_dataset("num_active_embeddings", data=num_active_embeddings_list)
-    
+        hf.create_dataset("latent_entropy", data=latent_entropy_list)
+
     vq_vae_trainer.save_model_weights(weights_path)
     print("Model weights have been saved to the path: " + weights_path)
     x_test_pred = vq_vae_trainer.predict(x_test)
@@ -392,12 +412,13 @@ def test_vq_vae(inputs_dims:int, latent_dims:int, num_embeddings, plot_figure:bo
         plt.ylabel("SINR")
     return mse
 
+
 if __name__ == "__main__":
     model_type = "lstm"
     embedding_init = "random"
     num_epochs = 20
     optimizer = "RMSprop"
     
-    train_vq_vae(model_type=model_type, inputs_dims=40, latent_dims=20, num_embeddings=128, embedding_init=embedding_init, num_epochs=20, \
+    train_vq_vae(model_type=model_type, inputs_dims=40, latent_dims=20, num_embeddings=8, embedding_init=embedding_init, num_epochs=5, \
         plot_figure=False, optimizer="RMSprop")
 

@@ -1,18 +1,17 @@
 # VQ-VAE based SINR compression and LSTM prediction 
-In this repository, we are going to explore the schemes of VQ-VAE based SINR compression and LSTM based Prediction
+Welcome to the repository dedicated to VQ-VAE based SINR Compression and LSTM Prediction. Here, we present a focused exploration of these advanced schemes, aimed at efficient data compression and accurate SINR forecasting.
 
 ## VQ-VAE Models
-VQ-VAE models trainig files can be found in the folder "compress_recover"
-Models are saved in the folder "models_new"
+Explore the compress_recover folder to access crucial files for training our VQ-VAE models. These models are designed to compress Signal-to-Interference-plus-Noise Ratio (SINR) data using Vector Quantized Variational Autoencoders. Saved models reside in the models_new directory, ready for deployment in diverse applications.
 
 ## LSTM model
-LSTM training files are in the folder "Interferncer_prediction"
+The Interferncer_prediction folder contains essential LSTM training files. Long Short-Term Memory networks serve as the foundation for our SINR prediction model, offering sophisticated sequential modeling for precise forecasting.
 
 ## Simulation
-Simulations files saved in the folder "compare_recover".
+In the compare_recover folder, discover simulation files showcasing the effectiveness of our methodologies. Witness how our VQ-VAE based SINR compression and LSTM prediction techniques deliver reduced data sizes without sacrificing predictive accuracy.
 
 ## Others
-Others update are also inclucded.
+In the compare_recover folder, discover simulation files showcasing the effectiveness of our methodologies. Witness how our VQ-VAE based SINR compression and LSTM prediction techniques deliver reduced data sizes without sacrificing predictive accuracy.
 
 
 

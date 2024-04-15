@@ -91,7 +91,7 @@ def generate_sinr_data(interference_type:str="random"):
             interference_power = interference_channel_4*interference_sensor_4.tx_power + \
                 interference_channel_5*interference_sensor_5.tx_power
         
-        noise_power = 0.01
+        noise_power = 1
         
         interference_list.append(interference_power)
         signal_power = base_station.tx_power * channel_BS.calculate_channel(UE_position, BS_position, time_index)
